@@ -1,4 +1,4 @@
-from playwright.async_api import Page
+from playwright.async_api import Page, Locator
 import asyncio
 import time
 import google.generativeai as genai
@@ -33,63 +33,100 @@ async def reels_scroller(page: Page, reels_data):
         except Exception() as e:
             print(f"Error while scrolling: {e}")
 
+async def profile_reels_watcher(page: Page, profile: str, limit_reels_to: int = 20, timer_to_stop: int = 2*60*60, time_to_watch_1: int = 2*60):
+    """Watch reels from a specific profile"""
+    
+    PROFILE_URL = f"https://www.instagram.com/{profile}/reels"
+    await page.goto(PROFILE_URL)
 
-async def generate_huggingface_response(text: str, model_name: str = "google/gemma-7b-it") -> str:
-    """
-    Generates a response from a Hugging Face model using text and optional images.
+    await page.wait_for_timeout(2000)  # Wait for the page to load
+    await page.wait_for_selector('a[href*="/reel/"]')  # Wait for the reels to load
 
-    Args:
-        text: The text prompt.
-        image_paths: A list of image file paths (optional).
-        model_name: The Hugging Face model identifier.
 
-    Returns:
-        The generated text response from the model, or None if an error occurs.
-    """
+    # get ready to start watching
+    a_tag : Locator = page.locator(f'a[href*="/reel/"]')  # Select the first matching <a> tag
+    a_tag = a_tag.first  # Get the first matching <a> tag
+    if await a_tag.is_visible():
+        await a_tag.click() 
+        print("clicked the first post")
+    
+    time_to_watch_ms = time_to_watch_1*1000
+    start_time = time.time()
+    # watch till the given timer
+    while time.time() - start_time < timer_to_stop:
 
-    api_token = os.getenv("HUGGINGFACE_API_KEY") # Get API key from environment variables.
-    if not api_token:
-        print("Error: Hugging Face API key not found in environment variables.")
-        return None
+        await page.wait_for_timeout(time_to_watch_ms)  # Wait for the page to load
 
-    api_url = f"https://api-inference.huggingface.co/models/{model_name}"
-    headers = {"Authorization": f"Bearer {api_token}"}
+        try:
+            # go to next (using the next button svg)
+            await page.wait_for_selector('svg[aria-label="Next"]') 
+            svg_tag = page.locator('svg[aria-label="Next"]')
+            svg_tag = svg_tag.first
 
-    payload = {"inputs": text}
+            if await svg_tag.is_visible():
+                await svg_tag.click()
+                print("Clicked to next Post.")
+        except:
+            print("End of reels to watch exiting profile")
+            break
 
-    # if image_paths:
-    #   #Hugging face inference API's for multimodal models vary greatly.
-    #   #This code is for text only, and will require modification to work with multimodal models.
-    #   print("Warning: Image inputs are not currently supported in this text-only example.")
 
-    try:
-        response = requests.post(api_url, headers=headers, json=payload)
-        response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
-        result = response.json()
+# async def generate_huggingface_response(text: str, model_name: str = "google/gemma-7b-it") -> str:
+#     """
+#     Generates a response from a Hugging Face model using text and optional images.
 
-        if isinstance(result, list) and len(result) > 0 and "generated_text" in result[0]:
-            return result[0]["generated_text"].strip()
-        elif isinstance(result, dict) and "generated_text" in result:
-            return result["generated_text"].strip()
-        elif isinstance(result, list) and len(result) > 0 and "summary_text" in result[0]:
-            return result[0]["summary_text"].strip()
-        elif isinstance(result, dict) and "summary_text" in result:
-            return result["summary_text"].strip()
-        elif isinstance(result, str):
-            return result.strip()
-        else:
-            print(f"Unexpected response format: {result}")
-            return None
+#     Args:
+#         text: The text prompt.
+#         image_paths: A list of image file paths (optional).
+#         model_name: The Hugging Face model identifier.
 
-    except requests.exceptions.RequestException as e:
-        print(f"Hugging Face API request failed: {e}")
-        return None
-    except KeyError:
-        print("Error: Response does not contain 'generated_text' or 'summary_text'")
-        return None
-    except Exception as e:
-        print(f"An unexpected error occurred: {e}")
-        return None
+#     Returns:
+#         The generated text response from the model, or None if an error occurs.
+#     """
+
+#     api_token = os.getenv("HUGGINGFACE_API_KEY") # Get API key from environment variables.
+#     if not api_token:
+#         print("Error: Hugging Face API key not found in environment variables.")
+#         return None
+
+#     api_url = f"https://api-inference.huggingface.co/models/{model_name}"
+#     headers = {"Authorization": f"Bearer {api_token}"}
+
+#     payload = {"inputs": text}
+
+#     # if image_paths:
+#     #   #Hugging face inference API's for multimodal models vary greatly.
+#     #   #This code is for text only, and will require modification to work with multimodal models.
+#     #   print("Warning: Image inputs are not currently supported in this text-only example.")
+
+#     try:
+#         response = requests.post(api_url, headers=headers, json=payload)
+#         response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
+#         result = response.json()
+
+#         if isinstance(result, list) and len(result) > 0 and "generated_text" in result[0]:
+#             return result[0]["generated_text"].strip()
+#         elif isinstance(result, dict) and "generated_text" in result:
+#             return result["generated_text"].strip()
+#         elif isinstance(result, list) and len(result) > 0 and "summary_text" in result[0]:
+#             return result[0]["summary_text"].strip()
+#         elif isinstance(result, dict) and "summary_text" in result:
+#             return result["summary_text"].strip()
+#         elif isinstance(result, str):
+#             return result.strip()
+#         else:
+#             print(f"Unexpected response format: {result}")
+#             return None
+
+#     except requests.exceptions.RequestException as e:
+#         print(f"Hugging Face API request failed: {e}")
+#         return None
+#     except KeyError:
+#         print("Error: Response does not contain 'generated_text' or 'summary_text'")
+#         return None
+#     except Exception as e:
+#         print(f"An unexpected error occurred: {e}")
+#         return None
 
 
 # async def generate_gemini_response(text: str, image_paths: list[str] = None) -> str:
