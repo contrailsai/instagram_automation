@@ -1,0 +1,7 @@
+/reels_scroler/__pycache__/
+/network
+/.env
+/ig_auth.json
+info.txt
+request_urls.json
+poetry.lock
