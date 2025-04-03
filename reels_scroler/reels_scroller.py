@@ -22,6 +22,14 @@ async def click_icon(page: Page, type):
         print(f"Error clicking SVG button with aria-label='{type}': {e}")
         return False
 
+async def click_like_button(page: Page):
+    x = 929+12
+    y = 366+12
+    await page.mouse.move(x, y)
+    await page.wait_for_timeout(300)  # Pause for visibility
+    await page.mouse.click(x, y, button="left")
+
+
 def add_username_to_potential_list(username):
     try:
         with open("potential_profiles_list.txt", "a") as f:
@@ -30,9 +38,7 @@ def add_username_to_potential_list(username):
     except:
         return False
 
-async def reels_scroller(page: Page, reels_data, watch_time = 2*60*60):
-
-    topic_texts = ["ipl", "rcb", "gt", "csk", "dc", "kkr", "rr", "pk", "lsg", "srh", "mi", "cricket"]
+async def reels_scroller(page: Page, reels_data, topic_texts , usernames: set, watch_time = 2*60*60):
 
     start_time = time.time()
     seen_count = 1
@@ -58,11 +64,11 @@ async def reels_scroller(page: Page, reels_data, watch_time = 2*60*60):
                     pass
                 else:
                     await page.wait_for_timeout(10*1000)   # Watch for 10 secs       
-                    res = await click_icon(page, "Like")
-                    print("LIKED") if res==True else print("NOT LIKED")
+                    # res = await click_icon(page, "Like")
+                    await click_like_button(page)
 
                     profile_username = media_data["owner"]["username"]
-
+                    usernames.add(profile_username)
                     add_username_to_potential_list(profile_username)
 
                     await page.wait_for_timeout(20*1000)  # Watch for 20 more secs
@@ -78,6 +84,9 @@ async def reels_scroller(page: Page, reels_data, watch_time = 2*60*60):
 
         except Exception() as e:
             print(f"Error while scrolling: {e}")
+        
+        if len(usernames) > 50: 
+            return
 
 async def profile_reels_watcher(page: Page, profile: str, timer_to_stop: int = 2*60*60, time_to_watch_1: int = 2*60):
     """Watch reels from a specific profile"""
