@@ -6,34 +6,80 @@ import os
 import base64
 import requests
 
-async def reels_scroller(page: Page, reels_data):
-    seen_count = 0  
-    while True:
+async def click_icon(page: Page, type):
+    try:
+        script = '''
+                (type) => {
+                    let svg = document.querySelector(`svg[aria-label="${type}"]`);   
+                    let button = svg.closest(`div[role="button"]`)
+                    button.click()
+                }
+                '''
+        await page.evaluate(script, type)
+        await page.wait_for_timeout(1000)  # Wait for the action to complete
+        return True
+    except Exception as e:
+        print(f"Error clicking SVG button with aria-label='{type}': {e}")
+        return False
+
+def add_username_to_potential_list(username):
+    try:
+        with open("potential_profiles_list.txt", "a") as f:
+            f.write(username+"\n")
+        return True
+    except:
+        return False
+
+async def reels_scroller(page: Page, reels_data, watch_time = 2*60*60):
+
+    topic_texts = ["ipl", "rcb", "gt", "csk", "dc", "kkr", "rr", "pk", "lsg", "srh", "mi", "cricket"]
+
+    start_time = time.time()
+    seen_count = 1
+    while time.time() - start_time < watch_time:
         try:
-            start_time = time.time()
             # process reel info
             reel_code = page.url.split('/')[-1] if page.url.split('/')[-1] != "" else page.url.split('/')[-2]
-            print(f"code = {reel_code}")
+            print(f"{seen_count}. code = {reel_code}")
             try:
                 media_data = reels_data[reel_code]
-                print(f"text = {media_data["caption"]["text"]}")
+                caption = media_data["caption"]["text"]
 
-                # process the caption text, img, possibly video / ss of video then do stuff with it
+                reel_on_topic = False
 
-                response_value = await generate_huggingface_response(media_data["caption"]["text"])
+                for topic in topic_texts:
+                    if topic in caption:
+                        reel_on_topic = True
+                        break
+                
+                if not reel_on_topic:
+                    print("skipping")
+                    await page.wait_for_timeout(2*1000) # some delay to not be too fast in skipping
+                    pass
+                else:
+                    await page.wait_for_timeout(10*1000)   # Watch for 10 secs       
+                    res = await click_icon(page, "Like")
+                    print("LIKED") if res==True else print("NOT LIKED")
 
-                print("response value = ", response_value)
+                    profile_username = media_data["owner"]["username"]
 
-                await asyncio.sleep(20 - (time.time()-start_time))
-            except:
+                    add_username_to_potential_list(profile_username)
+
+                    await page.wait_for_timeout(20*1000)  # Watch for 20 more secs
+                    print("taken")
+            except Exception as e:
+                print(f"Error: {e}")
                 print("reel not in data going to next")
+
+
             await page.keyboard.press('ArrowDown')
-            await asyncio.sleep(2) # some breathing space for the url and stuff to update 
-            print(f"-------Reels scrolled: {seen_count}---------")
+            await page.wait_for_timeout(2*1000) # some breathing space for the url and stuff to update 
+            seen_count+=1
+
         except Exception() as e:
             print(f"Error while scrolling: {e}")
 
-async def profile_reels_watcher(page: Page, profile: str, limit_reels_to: int = 20, timer_to_stop: int = 2*60*60, time_to_watch_1: int = 2*60):
+async def profile_reels_watcher(page: Page, profile: str, timer_to_stop: int = 2*60*60, time_to_watch_1: int = 2*60):
     """Watch reels from a specific profile"""
     
     PROFILE_URL = f"https://www.instagram.com/{profile}/reels"
@@ -54,22 +100,12 @@ async def profile_reels_watcher(page: Page, profile: str, limit_reels_to: int = 
     start_time = time.time()
     # watch till the given timer
     while time.time() - start_time < timer_to_stop:
-
         await page.wait_for_timeout(time_to_watch_ms)  # Wait for the page to load
 
-        try:
-            # go to next (using the next button svg)
-            await page.wait_for_selector('svg[aria-label="Next"]') 
-            svg_tag = page.locator('svg[aria-label="Next"]')
-            svg_tag = svg_tag.first
-
-            if await svg_tag.is_visible():
-                await svg_tag.click()
-                print("Clicked to next Post.")
-        except:
-            print("End of reels to watch exiting profile")
-            break
-
+        # like the reel
+        await click_icon(page, "Like")
+        print("reel clicked")
+        await page.keyboard.press('ArrowRight')
 
 # async def generate_huggingface_response(text: str, model_name: str = "google/gemma-7b-it") -> str:
 #     """
