@@ -15,7 +15,9 @@ COLLECTION_NAME = os.getenv("COLLECTION_NAME")
 client = AsyncIOMotorClient(MONGO_URI)
 db = client[DB_NAME]
 
-async def insert_document(text: str, topic_attributes, hashtags, scraper_name) -> dict:
+# SCRAPERS DATABASE FUNCTIONS
+
+async def new_scraper(text: str, topic_attributes, hashtags, scraper_name) -> dict:
     # select the correct collection
     collection = db["scrapers"]
 
@@ -53,6 +55,40 @@ async def get_document_by_id(document_id: str) -> dict:
     if document:
         return {"id": str(document["_id"]), **document}
     return None
+
+def updated_doc_properties(doc: dict) -> dict:
+    update_doc = dict({})
+
+    if doc.get("reels_seen", False):
+        update_doc["reels_seen"] = doc["reels_seen"]
+
+    if doc.get("relevant_reels_seen", False):
+        update_doc["relevant_reels_seen"] = doc["relevant_reels_seen"]
+
+    if doc.get("state", False):
+        update_doc["state"] = doc["state"]
+
+    return update_doc
+
+async def update_scraper_data(scraper_id: str, data: dict) -> dict:
+    # select the correct collection
+    collection = db["scrapers"]
+    
+    try:
+        scraper_object_id = ObjectId(scraper_id)
+    except: # invalid id format
+        return None
+
+    update_doc = updated_doc_properties(data)
+
+    result = await collection.update_one(
+        {"_id": scraper_object_id},
+        {"$set": update_doc},
+        upsert=True
+    )
+    return {"id": str(result.upserted_id), **data}
+
+# ACCOUNTS DATABASE FUNCTIONS
 
 async def insert_account(account_data: dict) -> dict:
     # select the correct collection
@@ -120,3 +156,100 @@ async def assign_scraper_to_account(scraper_id: str, account_id: str) -> None:
         }
     )
 
+
+# SCRAPED PROFILES DATABASE FUNCTIONS
+
+async def add_profile(scraper_id: str, username: str) -> dict:
+    # select the correct collection
+    collection = db["scrape_profiles"]
+
+    double_check = await collection.find_one({"scraper_id": scraper_id, "username": username})
+    if double_check:
+        return {"id": str(double_check["_id"])}
+
+    profile = dict()
+    profile["scraper_id"] = scraper_id
+    profile["saved_on"] = datetime.utcnow()
+    profile["scraped"] = False
+    profile["username"] = username
+
+    result = await collection.insert_one(profile)
+    return {"id": str(result.inserted_id)}
+
+async def update_profile(scraper_id: str, username: str, data: dict) -> dict:
+    # select the correct collection
+    collection = db["scrape_profiles"]
+
+    result = await collection.update_one(
+        {"scraper_id": scraper_id, "username": username},
+        {
+            "$set": {
+                "scraped": True,
+                "bio": data["text"],
+                "links": data["links"]
+            }
+        }
+    )
+    return {"id": str(result.upserted_id), **data}
+
+async def get_unscraped_profiles(scraper_id: str) -> list:
+    # select the correct collection
+    collection = db["scrape_profiles"]
+
+    documents = await collection.find({"scraper_id": scraper_id, "scraped": False}, {"username": 1, "_id": 0}).to_list(length=None)
+    return [doc["username"] for doc in documents]
+
+# SCRAPED CONTENT DATABASE FUNCTIONS
+
+def create_doc(media):
+    try:
+        doc = {
+            "code": media.get("code", ""),
+            "like_count": media.get("like_count", 0),
+            "comment_count": media.get("comment_count", 0),
+            "view_count": media.get("view_count", 0),
+            "taken_at": media.get("taken_at", None),
+            "location": media.get("location", None)
+        }
+        
+        # Safely get caption text
+        caption = media.get("caption", {})
+        doc["caption"] = caption.get("text", "") if isinstance(caption, dict) else ""
+        
+        # Safely get username
+        user = media.get("user", {})
+        doc["username"] = user.get("username", "") if isinstance(user, dict) else ""
+                
+        return doc
+    except Exception as e:
+        # Fallback in case of any error
+        print(f"Error creating document: {str(e)}")
+        return {
+            "code": media.get("code", ""),
+            "error": "Failed to process complete media data"
+        }
+
+async def save_scraped_content(scraper_id: str, content: dict) -> dict:
+    # select the correct collection
+    collection = db["scraped_content"]
+
+    doc = create_doc(content)
+    doc["scraper_id"] = scraper_id
+    doc["saved_on"] = datetime.utcnow()
+
+    result = await collection.insert_one(doc)
+    return {"id": str(result.inserted_id)}
+
+async def save_many_scraped_content(scraper_id: str, contents: list) -> None:
+    # select the correct collection
+    collection = db["scraped_content"]
+
+    documents = []
+    print(len(contents))
+    for content in contents:
+        doc = create_doc(content)
+        doc["scraper_id"] = scraper_id
+        doc["saved_on"] = datetime.utcnow()
+        documents.append(doc)
+    print(len(documents))        
+    await collection.insert_many(documents)

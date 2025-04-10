@@ -10,12 +10,16 @@ import multiprocessing
 from google import generativeai as genai
 import base64
 from llm_instructions import title_keywords_hashtags_instruction
-from database import insert_document, get_all_document_ids, insert_account, get_unassigned_account, assign_scraper_to_account
+from database import new_scraper, get_all_document_ids, insert_account, get_unassigned_account, assign_scraper_to_account
 
 load_dotenv()
 
 class Prompt(BaseModel):
     text: str
+
+class AccountModel(BaseModel):
+    username: str
+    password: str
 
 app = FastAPI()
 
@@ -27,10 +31,6 @@ llm_model = genai.GenerativeModel(model_name='gemini-1.5-flash')
 @app.get("/")
 async def read_root():
     return {"message": "Welcome to the Async FastAPI server!"}
-
-class AccountModel(BaseModel):
-    username: str
-    password: str
 
 @app.post("/save-account")
 async def save_account(account: AccountModel):
@@ -76,7 +76,7 @@ async def generate_prompt(prompt: Prompt):
     response = await title_keywords_hashtags_instruction(llm_model, user_text)
     print(response)
 
-    document = await insert_document(
+    document = await new_scraper(
         text=user_text, 
         topic_attributes=response.get('keywords', []), 
         hashtags=response.get('hashtags', []),

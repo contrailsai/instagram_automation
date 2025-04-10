@@ -7,7 +7,7 @@ from playwright.async_api import Page, Browser, Response
 from typing import Optional
 from playwright.async_api import async_playwright, Page, Locator
 
-from database import get_account_by_scraper_id, save_new_auth
+from database import update_scraper_data, get_account_by_scraper_id, save_new_auth, save_scraped_content, add_profile, update_profile, get_unscraped_profiles
 from reels_scroller.utils import save_profile_data
 import base64
 
@@ -18,8 +18,19 @@ class Instagram_Automator:
         self.page: Page = page
         self.scraper_data = scraper_data
         self.id = scraper_data.get("id", None)
+        self.reels_seen = scraper_data.get("reels_seen", 0)
+        self.relevant_reels_seen = scraper_data.get("relevant_reels_seen", 0)
 
-        self.topics_txt = ["ipl", "rcb", "gt", "csk", "dc", "kkr", "rr", "pk", "lsg", "srh", "mi", "cricket"]
+        # [search, profile_reels, reels, profile_bio, stopped, suspended]
+        self.state = scraper_data.get("state", "reels")
+
+        self.topics = set()
+        for topic in scraper_data.get("topic_attributes", []):
+            topic_elements = topic.split(" ")
+            for topic_element in topic_elements:
+                self.topics.add(topic_element)
+
+        self.topics_list : list[str] = list(self.topics)
 
 # login based on username, password in env or the auth cookies in the json file
     async def signIn(self) -> bool:
@@ -151,15 +162,16 @@ class Instagram_Automator:
             try:
                 # process reel info
                 reel_code = self.page.url.split('/')[-1] if self.page.url.split('/')[-1] != "" else self.page.url.split('/')[-2]
-                print(f"{seen_count}. code = {reel_code}")
+                print(f"{seen_count}. code = {reel_code} |", end=" ")
                 try:
                     media_data = reels_data[reel_code]
-                    caption = media_data["caption"]["text"]
+                    caption: str = media_data["caption"]["text"]
 
+                    self.reels_seen += 1
                     reel_on_topic = False
 
-                    for topic in self.topics_txt:
-                        if topic in caption:
+                    for topic in self.topics_list:
+                        if topic.lower() in caption.lower():
                             reel_on_topic = True
                             break
                     
@@ -168,13 +180,17 @@ class Instagram_Automator:
                         await self.page.wait_for_timeout(2*1000) # some delay to not be too fast in skipping
                         pass
                     else:
+                        self.relevant_reels_seen += 1
+                        await save_scraped_content(self.id, media_data) # save the scraped content to the database
                         await self.page.wait_for_timeout(10*1000)   # Watch for 10 secs       
                         # res = await click_icon(page, "Like")
                         await self.click_like_button(page_type="reels")
 
                         profile_username = media_data["owner"]["username"]
                         self.usernames.add(profile_username)
-                        self.add_username_to_potential_list(profile_username)
+
+                        await add_profile(self.id, profile_username) # add to the database
+                        # self.add_username_to_potential_list(profile_username)
 
                         await self.page.wait_for_timeout(20*1000)  # Watch for 20 more secs
                         print("taken")
@@ -198,8 +214,6 @@ class Instagram_Automator:
     async def watch_reels(self):
         # Create a shared data object to store network responses
         reels_data = {}
-
-        # topic_texts = ["ipl", "rcb", "gt", "csk", "dc", "kkr", "rr", "pk", "lsg", "srh", "mi", "cricket"]
 
         # Setup network listener
         self.page.on("response", lambda response: self.handle_reels_network(response, reels_data))
@@ -289,6 +303,7 @@ class Instagram_Automator:
                     new_bio_data[username] = {"username": username, "links": bio_links, "text": bio_txt}
 
                     self.bio_data.update(new_bio_data)
+                    await update_profile(self.id, username, new_bio_data[username])
 
             except Exception as e:
                 print(f"Failed to process response from {url}: {str(e)}")
@@ -313,6 +328,7 @@ class Instagram_Automator:
                         new_reels_data[ media["code"] ] = media
 
                     reels_data.update(new_reels_data)
+                    # await save_many_scraped_content(self.id, list(new_reels_data.values()))
 
                     # Save to all reels content as json
                     # import os
@@ -369,11 +385,36 @@ class Instagram_Automator:
         # Sign-IN
         await self.signIn()
 
+        # TODO: 1. search page go through based on hashtags
+        # TODO: 2. extract relevant profiles through liking posts, reels on search 
+        # (set a timer to limit stuff, content from a particular page)
+        # TODO: 3. 
+
         # await page.wait_for_timeout(30*60*1000)
         start_time = time.time()
 
         while time.time()-start_time < self.loop_watch_time:
+
+            await update_scraper_data(self.id, 
+                data=dict({
+                    "state": "reels"
+                })
+            )
+                        
+            # WATCH REELS
             await self.watch_reels()
+
+            await update_scraper_data(self.id, 
+                data=dict({
+                    "reels_seen": self.reels_seen,
+                    "relevant_reels_seen": self.relevant_reels_seen,
+                    "state": "profile_bio"
+                })
+            )
+
+            unscraped_profiles = await get_unscraped_profiles(self.id)
+            self.usernames.update(unscraped_profiles)
+
             await self.extract_links_from_bios()
 
             self.usernames.clear()
