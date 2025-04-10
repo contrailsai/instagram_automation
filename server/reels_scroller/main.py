@@ -1,14 +1,15 @@
 import asyncio
 from playwright.async_api import async_playwright, Page, Locator
-# from authentication import signIn
-# from reels_scroller import reels_scroller, profile_reels_watcher
-# from utils import save_profile_data
 from dotenv import load_dotenv
-from Instargam_Automater import Instagram_Automator
+from reels_scroller.Instargam_Automater import Instagram_Automator
+from database import get_document_by_id
 
 load_dotenv()
 
-async def main():
+async def main(scraper_id: str):
+    print("starting new scraper with id:", scraper_id)
+    scraper_data = await get_document_by_id(scraper_id)
+    print("scraper_data = ", scraper_data)
     async with async_playwright() as p:
         try:
             browser = await p.chromium.launch(
@@ -23,7 +24,7 @@ async def main():
             )
             page = await browser.new_page()
 
-            iao = Instagram_Automator(page)
+            iao = Instagram_Automator(page, scraper_data)
             await iao.loop_runner()
             
             print("Closing browser...")

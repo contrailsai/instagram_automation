@@ -6,28 +6,39 @@ from pathlib import Path
 from playwright.async_api import Page, Browser, Response
 from typing import Optional
 from playwright.async_api import async_playwright, Page, Locator
-from utils import save_profile_data
+
+from database import get_account_by_scraper_id, save_new_auth
+from reels_scroller.utils import save_profile_data
+import base64
 
 class Instagram_Automator:
-    def __init__(self, page: Page):
+    def __init__(self, page: Page, scraper_data):
         self.loop_watch_time = 2*60*60  # 2 hours
         self.usernames = set()
         self.page: Page = page
+        self.scraper_data = scraper_data
+        self.id = scraper_data.get("id", None)
 
         self.topics_txt = ["ipl", "rcb", "gt", "csk", "dc", "kkr", "rr", "pk", "lsg", "srh", "mi", "cricket"]
 
 # login based on username, password in env or the auth cookies in the json file
     async def signIn(self) -> bool:
-        AUTH_FILE = Path("ig_auth.json")
+        account_data: dict = await get_account_by_scraper_id(self.id)
+
+        # AUTH_FILE = Path("ig_auth.json")
         INSTAGRAM_AUTH_URL = "https://www.instagram.com/accounts/login/"
         INSTAGRAM_HOME_URL = "https://www.instagram.com/"
-        IG_USERNAME = os.getenv("IG_USERNAME")
-        IG_PASSWORD = os.getenv("IG_PASSWORD")
+        # Decode username and password from base64
+        IG_USERNAME = account_data["username"]
+        IG_PASSWORD = account_data["password"]
 
-        async def save_auth_data(context):
-            storage = await context.storage_state()
-            with open(AUTH_FILE, "w") as f:
-                json.dump(storage, f)
+        async def save_auth_data(page: Page):
+            storage = await page.context.storage_state()
+            auth_data = json.dumps(storage, indent=4)
+            await save_new_auth(auth_data, account_data["id"])
+
+            # with open(AUTH_FILE, "w") as f:
+            #     json.dump(storage, f)
             print("Authentication data saved")
 
         async def is_login_form_present(page: Page) -> bool:
@@ -84,9 +95,9 @@ class Instagram_Automator:
                     while True:
                         if await validate_login_success(page):
                             return True
-                        if await page.query_selector('#slfErrorAlert'):
-                            print("Login error detected")
-                            return False
+                        # if await page.query_selector('#slfErrorAlert'):
+                        #     print("Login error detected")
+                        #     return False
                         await asyncio.sleep(1)
             except TimeoutError:
                 print("Login timeout")
@@ -94,10 +105,13 @@ class Instagram_Automator:
 
         try:
             # Try to reuse existing auth
-            if AUTH_FILE.exists():
+            if account_data.get("auth", False):
                 print("Found existing auth file, trying to reuse...")
-                with open(AUTH_FILE) as f:
-                    storage_state = json.load(f)
+                
+                storage_state = json.loads(account_data["auth"])
+                # with open(AUTH_FILE) as f:
+                #     storage_state = json.load(f)
+
                 await self.page.context.add_cookies(storage_state["cookies"])
                 
                 await self.page.goto(INSTAGRAM_HOME_URL)
@@ -106,7 +120,7 @@ class Instagram_Automator:
                     return True
                 
                 print("Session expired or invalid")
-                AUTH_FILE.unlink()
+                # AUTH_FILE.unlink()
 
             # Perform fresh login
             if not await login_with_credentials(self.page):

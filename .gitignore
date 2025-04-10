@@ -1,11 +1,14 @@
-/reels_scroler/__pycache__/
 /network
-/.env
 /ig_auth.json
 info.txt
 request_urls.json
-poetry.lock
 potential_profiles_list.txt
 profiles_links_n_text.json
 profiles_list.txt
 bio_links.txt
+
+.env
+poetry.lock
+__pycache__/
+*.py[cod]
+*$py.class
