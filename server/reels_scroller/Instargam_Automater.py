@@ -22,7 +22,7 @@ class Instagram_Automator:
         self.relevant_reels_seen = scraper_data.get("relevant_reels_seen", 0)
 
         # [search, profile_reels, reels, profile_bio, stopped, suspended]
-        self.state = scraper_data.get("state", "reels")
+        self.state = scraper_data.get("state", "new")
 
         self.topics = set()
         for topic in scraper_data.get("topic_attributes", []):
@@ -31,6 +31,7 @@ class Instagram_Automator:
                 self.topics.add(topic_element)
 
         self.topics_list : list[str] = list(self.topics)
+        self.hashtags : list[str] = scraper_data.get("hashtags", [])
 
 # login based on username, password in env or the auth cookies in the json file
     async def signIn(self) -> bool:
@@ -151,6 +152,51 @@ class Instagram_Automator:
             print(f"Login failed: {str(e)}")
             return False
     
+# ----------- search --------------
+# go throught each post/reel on the search page and find relevant content
+    async def go_through_search_page(self, time_to_watch_1: int = 15, timer_to_stop: int = 10*60):
+        """Go through the search page and like relevant posts"""
+
+        for hashtag in self.hashtags:
+            SEARCH_URL = "https://www.instagram.com/explore/search/keyword/?q="+ hashtag.replace("#", "%23")
+            await self.page.goto(SEARCH_URL)
+
+            await self.page.wait_for_timeout(2000)  # Wait for the page to load
+            await self.page.wait_for_selector('a[href*="/p/"]')  # Wait for the posts to load
+
+            # get ready to start watching
+            a_tag: Locator = self.page.locator('a[href*="/p/"]')  # Select the first matching <a> tag
+            a_tag = a_tag.first  # Get the first matching <a> tag
+            if await a_tag.is_visible():
+                await a_tag.click() 
+                print("clicked the first post")
+            
+            time_to_watch_ms = time_to_watch_1*1000
+            start_time = time.time()
+            # watch till the given timer
+            while time.time() - start_time < timer_to_stop:
+
+                await self.page.wait_for_timeout(time_to_watch_ms)  # Wait for the page to load
+
+                username_a_tag: Locator = self.page.locator('header[class="_aaqw"] a[role="link"] ')  # Select the first matching <a> tag
+                username_a_tag = username_a_tag.first  # Get the first matching <a> tag
+
+                # Extract link and username
+                profile_link = await username_a_tag.get_attribute("href")
+                if profile_link:
+                    username = profile_link.strip("/").split("/")[-1]
+                    print(username)
+                    self.usernames.add(username)
+                    await add_profile(self.id, username)  # Add to the database
+
+                # like the post
+                # await self.click_like_button(page_type="profile_reels")
+                await self.page.keyboard.press('ArrowRight')
+
+                # Wait for the page to load
+                await self.page.wait_for_timeout(2000)
+            
+
 # ----------- reels ---------------
 # watching reels based on the current algorithm, manipulate based on the topics [list of txt] in caption 
     async def reels_scroller(self, reels_data, watch_time = 2*60*60, max_usernames_count = 50):
@@ -229,33 +275,40 @@ class Instagram_Automator:
         except:
             input("stopped reels scrolling (waiting for a key to exit)")
 
-    async def profile_reels_watcher(self, profile: str, timer_to_stop: int = 2*60*60, time_to_watch_1: int = 2*60):
+    async def profiles_reels_watcher(self, profiles, timer_to_stop: int = 1*60*60, time_to_watch_1: int = 30):
         """Watch reels from a specific profile"""
         
-        PROFILE_URL = f"https://www.instagram.com/{profile}/reels"
-        await self.page.goto(PROFILE_URL)
+        for username in profiles:
+            print("watching profile reels for:", username)
+            try:
+                # go to the profile page
+                PROFILE_URL = f"https://www.instagram.com/{username}/reels"
+                await self.page.goto(PROFILE_URL)
 
-        await self.page.wait_for_timeout(2000)  # Wait for the page to load
-        await self.page.wait_for_selector('a[href*="/reel/"]')  # Wait for the reels to load
+                await self.page.wait_for_timeout(2000)  # Wait for the page to load
+                await self.page.wait_for_selector('a[href*="/reel/"]', timeout=30*1000)  # Wait for the reels to load
 
+                # get ready to start watching
+                a_tag : Locator = self.page.locator(f'a[href*="/reel/"]')  # Select the first matching <a> tag
+                a_tag = a_tag.first  # Get the first matching <a> tag
+                if await a_tag.is_visible():
+                    await a_tag.click() 
+                    print("clicked the first reel")
+            
+                time_to_watch_ms = time_to_watch_1*1000
+                start_time = time.time()
+                # watch till the given timer
+                while time.time() - start_time < timer_to_stop:
+                    await self.page.wait_for_timeout(time_to_watch_ms)  # Wait for the page to load
+                    self.reels_seen+=1
+                    self.relevant_reels_seen+=1
+                    # like the reel
+                    await self.click_like_button(page_type="profile_reels")
+                    await self.page.keyboard.press('ArrowRight')
 
-        # get ready to start watching
-        a_tag : Locator = self.page.locator(f'a[href*="/reel/"]')  # Select the first matching <a> tag
-        a_tag = a_tag.first  # Get the first matching <a> tag
-        if await a_tag.is_visible():
-            await a_tag.click() 
-            print("clicked the first post")
-        
-        time_to_watch_ms = time_to_watch_1*1000
-        start_time = time.time()
-        # watch till the given timer
-        while time.time() - start_time < timer_to_stop:
-            await self.page.wait_for_timeout(time_to_watch_ms)  # Wait for the page to load
-
-            # like the reel
-            await self.click_like_button(page_type="profile_reels")
-            print("reel clicked")
-            await self.page.keyboard.press('ArrowRight')
+            except Exception as e:
+                print(f"Error watching profile reels / user has no reels posted")
+                continue
 
 # ---------- profiles --------------
 # extract links and text from profile bios
@@ -358,7 +411,7 @@ class Instagram_Automator:
                     }
                     '''
             await self.page.evaluate(script, type)
-            await self.page.wait_for_timeout(1000)  # Wait for the action to complete
+            await self.page.wait_for_timeout(1500)  # Wait for the action to complete
             return True
         except Exception as e:
             print(f"Error clicking SVG button with aria-label='{type}': {e}")
@@ -386,36 +439,66 @@ class Instagram_Automator:
         await self.signIn()
 
         # TODO: 1. search page go through based on hashtags
-        # TODO: 2. extract relevant profiles through liking posts, reels on search 
-        # (set a timer to limit stuff, content from a particular page)
-        # TODO: 3. 
+        if self.state == "new": 
+            self.state = "search"
+            await update_scraper_data(self.id, 
+                data=dict({
+                    "state": "search"
+                })
+            )
+        
+        if self.state == "search":
+            await self.go_through_search_page()
+            self.state = "profile_reels"
+            await update_scraper_data(self.id, 
+                data=dict({
+                    "state": "profile_reels"
+                })
+            )
+
+        if self.state == "profile_reels":
+            unscraped_profiles = await get_unscraped_profiles(self.id)
+            await self.profiles_reels_watcher(profiles=unscraped_profiles)
+            self.state = "reels"
+            await update_scraper_data(self.id, 
+                data=dict({
+                    "reels_seen": self.reels_seen,
+                    "relevant_reels_seen": self.relevant_reels_seen,
+                    "state": "reels"
+                })
+            )
 
         # await page.wait_for_timeout(30*60*1000)
         start_time = time.time()
 
         while time.time()-start_time < self.loop_watch_time:
 
-            await update_scraper_data(self.id, 
-                data=dict({
-                    "state": "reels"
-                })
-            )
-                        
-            # WATCH REELS
-            await self.watch_reels()
+            if self.state == "reels":
+                # WATCH REELS
+                await self.watch_reels()
 
-            await update_scraper_data(self.id, 
-                data=dict({
-                    "reels_seen": self.reels_seen,
-                    "relevant_reels_seen": self.relevant_reels_seen,
-                    "state": "profile_bio"
-                })
-            )
+                await update_scraper_data(self.id, 
+                    data=dict({
+                        "reels_seen": self.reels_seen,
+                        "relevant_reels_seen": self.relevant_reels_seen,
+                        "state": "profile_bio"
+                    })
+                )
+                self.state = "profile_bio"
 
             unscraped_profiles = await get_unscraped_profiles(self.id)
             self.usernames.update(unscraped_profiles)
 
-            await self.extract_links_from_bios()
+            if self.state == "profile_bio":
+                # EXTRACT LINKS FROM PROFILES
+                await self.extract_links_from_bios()
+
+                self.state = "reels"
+                await update_scraper_data(self.id, 
+                    data=dict({
+                        "state": "reels"
+                    })
+                )
 
             self.usernames.clear()
             
