@@ -20,6 +20,7 @@ class Instagram_Automator:
         self.id = scraper_data.get("id", None)
         self.reels_seen = scraper_data.get("reels_seen", 0)
         self.relevant_reels_seen = scraper_data.get("relevant_reels_seen", 0)
+        self.total_time = scraper_data.get("total_time", 0)
 
         # [search, profile_reels, reels, profile_bio, stopped, suspended]
         self.state = scraper_data.get("state", "new")
@@ -275,19 +276,35 @@ class Instagram_Automator:
         except:
             input("stopped reels scrolling (waiting for a key to exit)")
 
-    async def profiles_reels_watcher(self, profiles, timer_to_stop: int = 1*60*60, time_to_watch_1: int = 30):
+    async def profiles_reels_watcher(self, profiles, timer_to_stop: int = 15*60):
         """Watch reels from a specific profile"""
-        
+        print("----PROFILE REELS WATCHER----")
+        reels_data = dict()
+        self.page.on("response", lambda response: self.handle_profile_reel_watcher_network(response, reels_data))
+        seen_count = 1
+
+        self.bio_data = dict()
+
         for username in profiles:
             print("watching profile reels for:", username)
             try:
                 # go to the profile page
                 PROFILE_URL = f"https://www.instagram.com/{username}/reels"
                 await self.page.goto(PROFILE_URL)
+                await self.page.wait_for_timeout(3*1000) # wait 3 secs for page to load
 
-                await self.page.wait_for_timeout(2000)  # Wait for the page to load
+                # wait for the profile data to be saved
+                start_time = time.time()
+                while (not self.bio_data.get(username, False)) or (time.time()-start_time > 24) : # max wait for 24 secs (in case profile doesn't exist anymore / its private)
+                    await self.page.wait_for_timeout(1000) # wait 1 sec before rechecking
+                print("saved bio data")
+
+                # wait for reels_data to be loaded
+                while len(reels_data.keys()) == 0:
+                    await asyncio.sleep(1)
+                # print("got data for reels: ", list(reels_data.keys()))
+
                 await self.page.wait_for_selector('a[href*="/reel/"]', timeout=30*1000)  # Wait for the reels to load
-
                 # get ready to start watching
                 a_tag : Locator = self.page.locator(f'a[href*="/reel/"]')  # Select the first matching <a> tag
                 a_tag = a_tag.first  # Get the first matching <a> tag
@@ -295,20 +312,64 @@ class Instagram_Automator:
                     await a_tag.click() 
                     print("clicked the first reel")
             
-                time_to_watch_ms = time_to_watch_1*1000
                 start_time = time.time()
                 # watch till the given timer
                 while time.time() - start_time < timer_to_stop:
-                    await self.page.wait_for_timeout(time_to_watch_ms)  # Wait for the page to load
-                    self.reels_seen+=1
-                    self.relevant_reels_seen+=1
-                    # like the reel
-                    await self.click_like_button(page_type="profile_reels")
+
+                    reel_code = self.page.url.split('/')[-1] if self.page.url.split('/')[-1] != "" else self.page.url.split('/')[-2]
+                    print(f"{seen_count}. code = {reel_code} |", end=" ")
+                    try:
+                        media_data = reels_data[reel_code]
+                        # print(media_data)
+
+                        # wait for caption to be there in the data
+                        if media_data.get("caption", False):
+                            caption: str = media_data["caption"]["text"]
+                        else:
+                            while not media_data.get("caption", False):
+                                await asyncio.sleep(1)
+                            caption:str = media_data["caption"]
+
+                        self.reels_seen += 1
+                        reel_on_topic = False
+
+                        for topic in self.topics_list:
+                            if topic.lower() in caption.lower():
+                                reel_on_topic = True
+                                break
+                        
+                        if not reel_on_topic:
+                            print("skipping")
+                            await self.page.wait_for_timeout(2*1000) # some delay to not be too fast in skipping
+                            pass
+                        else:
+                            self.relevant_reels_seen += 1
+                            await save_scraped_content(self.id, media_data) # save the scraped content to the database
+                            await self.page.wait_for_timeout(10*1000)   # Watch for 10 secs       
+                            # like reel
+                            await self.click_like_button(page_type="profile_reels")
+
+                            await self.page.wait_for_timeout(20*1000)  # Watch for 20 more secs
+                            print("taken")
+                    except Exception as e:
+                        print(f"Error: {e}")
+                        print("reel not in data going to next")
+                        await self.page.wait_for_timeout(2*1000) # some delay to not be too fast
+
+
+                    seen_count+=1
                     await self.page.keyboard.press('ArrowRight')
 
             except Exception as e:
                 print(f"Error watching profile reels / user has no reels posted")
                 continue
+
+            finally:
+                await self.update_scraper("profile_reels", data={
+                    "reels_seen": self.reels_seen,
+                    "relevant_reels_seen": self.relevant_reels_seen,
+                    "state": "profile_bio"
+                })
 
 # ---------- profiles --------------
 # extract links and text from profile bios
@@ -335,6 +396,51 @@ class Instagram_Automator:
 
 # ------- network handlers ---------
 # network handlers
+    async def handle_profile_reel_watcher_network(self, response, reels_data: dict):
+        url = response.url
+        target_url = "https://www.instagram.com/graphql/query"
+
+        if target_url in url:
+            try:
+                response_data = await response.json()
+
+                #reels data
+                if response_data["data"].get("xdt_api__v1__clips__user__connection_v2", False):
+                    new_reels_data = {}
+                    for edge in response_data["data"]["xdt_api__v1__clips__user__connection_v2"]["edges"]:
+                        media = edge["node"]["media"]
+                        new_reels_data[ media["code"] ] = media
+
+                    reels_data.update(new_reels_data)
+
+                # user info response
+                if response_data["data"].get("user", False):
+                    # it is confirmed that this is a user profile data
+                    new_bio_data = dict()
+                    username = response_data["data"]["user"]["username"]
+                    bio_txt = response_data["data"]["user"]["biography"]
+                    bio_links = []
+
+                    for link_obj in response_data["data"]["user"]["bio_links"]: 
+                        bio_links.append( link_obj["url"] )
+                    
+                    new_bio_data[username] = {"username": username, "links": bio_links, "text": bio_txt}
+
+                    self.bio_data.update(new_bio_data)
+                    await update_profile(self.id, username, new_bio_data[username])
+
+            except Exception as e:
+                print(f"Failed to process response from {url}: {str(e)}")
+    
+        if "comments" in url:
+            response_data = await response.json()
+            text = response_data["caption"]["text"]
+            media_id = response_data["caption"]["media_id"]
+
+            for reel in reels_data.values():
+                if media_id == reel["pk"]:
+                    reel["caption"] = text
+
     async def handle_profile_network(self, response):
         url = response.url
         target_url = "https://www.instagram.com/graphql/query"
@@ -373,7 +479,7 @@ class Instagram_Automator:
                 response_data = await response.json()
         
                 if response_data["data"].get("xdt_api__v1__clips__home__connection_v2", False) :
-                    # print(f"Found new reels update request")
+                    print(f"Found new reels update request")
 
                     new_reels_data = {}
                     for edge in response_data["data"]["xdt_api__v1__clips__home__connection_v2"]["edges"]:
@@ -431,81 +537,100 @@ class Instagram_Automator:
             # like using the SVG icon selector
             await self.click_icon("Like")
 
+    async def update_scraper(self, state, data=None):
+        self.state = state
+        new_time = time.time() - self.start_time
+
+        if data != None:
+            data["total_time"] = self.total_time + new_time
+            await update_scraper_data(self.id, data=data)
+        else:
+            await update_scraper_data(self.id, 
+                data=dict({
+                    "state": state,
+                    "total_time": self.total_time + new_time
+                })
+            )
+        
+        self.start_time = time.time()
+
 # main loop runner (switching between watching reels and extracting links)
     async def loop_runner(self):
         ''' run reel watcher and bio link extractor in a loop '''
     
-        # Sign-IN
-        await self.signIn()
+        self.start_time = time.time()
 
-        # TODO: 1. search page go through based on hashtags
-        if self.state == "new": 
-            self.state = "search"
-            await update_scraper_data(self.id, 
-                data=dict({
-                    "state": "search"
-                })
-            )
-        
-        if self.state == "search":
-            await self.go_through_search_page()
-            self.state = "profile_reels"
-            await update_scraper_data(self.id, 
-                data=dict({
-                    "state": "profile_reels"
-                })
-            )
+        try:
 
-        if self.state == "profile_reels":
-            unscraped_profiles = await get_unscraped_profiles(self.id)
-            await self.profiles_reels_watcher(profiles=unscraped_profiles)
-            self.state = "reels"
-            await update_scraper_data(self.id, 
-                data=dict({
+            # Sign-IN
+            await self.signIn()
+
+            if self.state == "new": 
+                await self.update_scraper("search")
+            
+            if self.state == "search":
+                await self.go_through_search_page()
+                await self.update_scraper("profile_reels")
+                
+            if self.state == "profile_reels":
+                unscraped_profiles = await get_unscraped_profiles(self.id)
+                await self.profiles_reels_watcher(profiles=unscraped_profiles)
+
+                await self.update_scraper("reels", data={
                     "reels_seen": self.reels_seen,
                     "relevant_reels_seen": self.relevant_reels_seen,
                     "state": "reels"
                 })
-            )
 
-        # await page.wait_for_timeout(30*60*1000)
-        start_time = time.time()
+            # await page.wait_for_timeout(30*60*1000)
+            start_time = time.time()
 
-        while time.time()-start_time < self.loop_watch_time:
+            while time.time()-start_time < self.loop_watch_time:
 
-            if self.state == "reels":
-                # WATCH REELS
-                await self.watch_reels()
+                if self.state == "reels":
+                    # WATCH REELS
+                    await self.watch_reels()
 
-                await update_scraper_data(self.id, 
-                    data=dict({
+                    await self.update_scraper("profile_bio", data={
                         "reels_seen": self.reels_seen,
                         "relevant_reels_seen": self.relevant_reels_seen,
                         "state": "profile_bio"
                     })
-                )
-                self.state = "profile_bio"
 
-            unscraped_profiles = await get_unscraped_profiles(self.id)
-            self.usernames.update(unscraped_profiles)
+                unscraped_profiles = await get_unscraped_profiles(self.id)
+                self.usernames.update(unscraped_profiles)
 
-            if self.state == "profile_bio":
-                # EXTRACT LINKS FROM PROFILES
-                await self.extract_links_from_bios()
+                if self.state == "profile_bio":
+                    # EXTRACT LINKS FROM PROFILES
+                    await self.extract_links_from_bios()
 
-                self.state = "reels"
-                await update_scraper_data(self.id, 
-                    data=dict({
-                        "state": "reels"
-                    })
-                )
+                    await self.update_scraper("reels")
 
-            self.usernames.clear()
-            
-        # # to watch reels from /reels
-        # await watch_reels(page)
+                self.usernames.clear()
 
-        # # to watch reels from a profile  (profile)   (watch for 2 hrs)    (watch 1 for 2 mins)
-        # await profile_reels_watcher(page, "ipl20", timer_to_stop=2*60*60, time_to_watch_1=2*60)
-
-        # extract links from username's bio saved in text file post func "watch_reels".
+        except Exception as e:
+            print("error occurred from in insta automator")
+        except KeyboardInterrupt:
+            print("keyboard Interrupt")
+        except asyncio.CancelledError:
+            # Perform cleanup (close browsers, files, etc.)
+            new_time = time.time() - start_time
+            await update_scraper_data(self.id, 
+                data=dict({
+                    "reels_seen": self.reels_seen,
+                    "relevant_reels_seen": self.relevant_reels_seen,
+                    "state": "profile_bio",
+                    "total_time": self.total_time + new_time
+                })
+            )
+            raise
+        finally:
+            new_time = time.time() - start_time
+            await update_scraper_data(self.id, 
+                data=dict({
+                    "reels_seen": self.reels_seen,
+                    "relevant_reels_seen": self.relevant_reels_seen,
+                    "state": "profile_bio",
+                    "total_time": self.total_time + new_time
+                })
+            )

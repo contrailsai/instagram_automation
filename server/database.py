@@ -30,12 +30,37 @@ async def new_scraper(text: str, topic_attributes, hashtags, scraper_name) -> di
     result = await collection.insert_one(document)
     return {"id": str(result.inserted_id), **document}
 
-async def get_all_document_ids() -> list:
+async def get_all_scrapers() -> list:
     # select the correct collection
     collection = db["scrapers"]
     
+    documents = await collection.find({}).to_list(length=None)
+    return [ dict({
+        "id": str(doc["_id"]),
+        "title": doc["scraper_name"],
+        "state": doc.get("state", "new"),
+        "active": doc.get("active", False),
+        "reels_seen": doc.get("reels_seen", 0),
+        "relevant_reels_seen": doc.get("relevant_reels_seen", 0),
+    }) for doc in documents]
+
+async def get_all_scraper_ids() -> list[str]:
+    collection = db["scrapers"]
+
     documents = await collection.find({}, {"_id": 1}).to_list(length=None)
-    return [str(doc["_id"]) for doc in documents]
+    return [ str(doc["_id"]) for doc in documents]
+
+async def get_scraper_state(document_id: str) -> str:
+    # select the correct collection
+    collection = db["scrapers"]
+
+    try:
+        object_id = ObjectId(document_id)
+    except: # invalid id format
+        return None
+    
+    document = await collection.find_one({"_id": object_id}, {"state": 1, "_id": 0})
+    return document["state"]
 
 async def get_all_documents() -> list:
     # select the correct collection
@@ -44,17 +69,35 @@ async def get_all_documents() -> list:
     documents = await collection.find().to_list(length=None)
     return [{"id": str(doc["_id"]), **doc} for doc in documents]
 
-async def get_document_by_id(document_id: str) -> dict:
+async def get_scraper_data_by_id(document_id: str) -> dict:
+    collection = db["scrapers"]
+    # print(document_id)
+    try:
+        object_id = ObjectId(document_id)
+    except: # invalid id format
+        return None
+    
+    document = await collection.find_one({"_id": object_id}, {"_id": 0})
+    if document:
+        document["id"] = str(document_id)
+        return document
+    return None
+
+async def set_scraper_activity(document_id: str, new_status: bool) -> dict:
+    ''' set the status of the scraper false for suspending, true for running '''
     collection = db["scrapers"]
     try:
         object_id = ObjectId(document_id)
     except: # invalid id format
         return None
     
-    document = await collection.find_one({"_id": object_id})
-    if document:
-        return {"id": str(document["_id"]), **document}
-    return None
+    document = await collection.find_one_and_update(
+        {"_id": object_id},
+        {"$set": {"active": new_status}},
+        upsert=True
+    )
+    return True
+
 
 def updated_doc_properties(doc: dict) -> dict:
     update_doc = dict({})
@@ -67,6 +110,9 @@ def updated_doc_properties(doc: dict) -> dict:
 
     if doc.get("state", False):
         update_doc["state"] = doc["state"]
+
+    if doc.get("total_time", 0):
+        update_doc["total_time"] = doc["total_time"]
 
     return update_doc
 
@@ -156,6 +202,15 @@ async def assign_scraper_to_account(scraper_id: str, account_id: str) -> None:
         }
     )
 
+async def get_all_accounts() -> list:
+    # select the correct collection
+    collection = db["accounts"]
+
+    documents = await collection.find({}).to_list(length=None)
+    return [dict({
+        "id": str(doc["_id"]),
+        "scraper_id": doc.get("scraper_id", None),
+    }) for doc in documents]
 
 # SCRAPED PROFILES DATABASE FUNCTIONS
 
@@ -201,6 +256,46 @@ async def get_unscraped_profiles(scraper_id: str) -> list:
 
 # SCRAPED CONTENT DATABASE FUNCTIONS
 
+async def get_reels_data(scraper_id: str) -> dict:
+    # select the correct collection
+    collection = db["scraped_content"]
+
+    documents = await collection.find({"scraper_id": scraper_id}).to_list(length=None)
+    return [dict({
+        "id": str(doc["_id"]),
+        "code": doc["code"],
+        "like_count": doc["like_count"],
+        "comment_count": doc["comment_count"],
+        "view_count": doc["view_count"],
+        "taken_at": doc["taken_at"],
+        "username": doc["username"],
+        "caption": doc["caption"]
+        # "location": doc["location"]
+    }) for doc in documents]
+
+async def get_profiles_data(scraper_id: str) -> dict:
+        # select the correct collection
+    collection = db["scrape_profiles"]
+
+    documents = await collection.find({"scraper_id": scraper_id, "scraped": True}).to_list(length=None)
+    return [dict({
+        "id": str(doc["_id"]),
+        "username": doc["username"],
+        "bio": doc["bio"],
+        "links": doc["links"],
+    }) for doc in documents]
+
+async def get_links_data(scraper_id: str) -> dict:
+    # select the correct collection
+    collection = db["scrape_profiles"]
+    links = set()
+    documents = await collection.find({"scraper_id": scraper_id, "scraped": True}, {"links": 1}).to_list(length=None)
+    for doc in documents:
+        for link in doc["links"]:
+            links.add(link)
+
+    return list(links)
+
 def create_doc(media):
     try:
         doc = {
@@ -245,11 +340,11 @@ async def save_many_scraped_content(scraper_id: str, contents: list) -> None:
     collection = db["scraped_content"]
 
     documents = []
-    print(len(contents))
+    # print(len(contents))
     for content in contents:
         doc = create_doc(content)
         doc["scraper_id"] = scraper_id
         doc["saved_on"] = datetime.utcnow()
         documents.append(doc)
-    print(len(documents))        
+    # print(len(documents))        
     await collection.insert_many(documents)

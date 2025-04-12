@@ -6,11 +6,16 @@ import uvicorn
 from dotenv import load_dotenv
 from pydantic import BaseModel
 import asyncio
-import multiprocessing
+from multiprocessing import Process
+# import multiprocessing
 from google import generativeai as genai
 import base64
 from llm_instructions import title_keywords_hashtags_instruction
-from database import new_scraper, get_all_document_ids, insert_account, get_unassigned_account, assign_scraper_to_account
+from database import get_all_accounts, new_scraper, get_scraper_state, get_all_scrapers, get_all_scraper_ids, get_scraper_data_by_id, insert_account, get_unassigned_account, assign_scraper_to_account, get_reels_data, get_profiles_data, get_links_data
+from fastapi.middleware.cors import CORSMiddleware
+import psutil 
+import tempfile
+import pickle
 
 load_dotenv()
 
@@ -23,6 +28,34 @@ class AccountModel(BaseModel):
 
 app = FastAPI()
 
+# Use a file to store process information between reloads
+PROCESS_TRACKING_FILE = os.path.join(tempfile.gettempdir(), "scraper_processes.pkl")
+def save_process_info(processes_dict: dict[str, int]):
+    """Save process info to a file"""
+    with open(PROCESS_TRACKING_FILE, "wb") as f:
+        pickle.dump(processes_dict, f)
+
+def load_process_info() -> dict[str, int]:
+    """Load process info from file"""
+    if os.path.exists(PROCESS_TRACKING_FILE):
+        try:
+            with open(PROCESS_TRACKING_FILE, "rb") as f:
+                return pickle.load(f)
+        except:
+            return {}
+    return {}
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # Allow only localhost:3000
+    allow_credentials=True,
+    allow_methods=["*"],  # Allow all HTTP methods
+    allow_headers=["*"],  # Allow all headers
+)
+
+running_processes: dict[str, int] = load_process_info()
+
 llm_api_key = os.getenv("GENAI_API_KEY")
 
 genai.configure(api_key=llm_api_key)
@@ -32,7 +65,140 @@ llm_model = genai.GenerativeModel(model_name='gemini-1.5-flash')
 async def read_root():
     return {"message": "Welcome to the Async FastAPI server!"}
 
-@app.post("/save-account")
+# ------- SCRAPER ENDPOINTS --------
+@app.get("/all_scrapers")
+async def all_scrapers():
+    '''Get all scrapers from the database'''
+    try:
+        all_scrapers = await get_all_scrapers()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch scrapers: {str(e)}")
+    
+    return {
+        "status": "success",
+        "scrapers": all_scrapers
+    }
+
+@app.get("/scraper_data/{scraper_id}")
+async def scraper_data(scraper_id: str):
+    '''Get a specific scraper from the database'''
+    try:
+        scraper = await get_scraper_data_by_id(scraper_id)
+        # print(scraper)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch scraper: {str(e)}")
+    
+    return {
+        "status": "success",
+        "scraper": scraper
+    }
+
+@app.get("/reels_data/{scraper_id}")
+async def reels_scraper(scraper_id: str):
+    '''Get a specific scraper from the database'''
+    try:
+        reels = await get_reels_data(scraper_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch scraper: {str(e)}")
+    
+    return {
+        "status": "success",
+        "reels": reels
+    }
+
+@app.get("/profiles_data/{scraper_id}")
+async def profiles_scraper(scraper_id: str):
+    '''Get a specific scraper from the database'''
+    try:
+        profiles = await get_profiles_data(scraper_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch scraper: {str(e)}")
+    
+    return {
+        "status": "success",
+        "profiles": profiles
+    }
+
+@app.get("/links/{scraper_id}")
+async def links_scraper(scraper_id: str):
+    '''Get a specific scraper from the database'''
+    try:
+        links = await get_links_data(scraper_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch scraper: {str(e)}")
+    
+    return {
+        "status": "success",
+        "links": links
+    }
+
+@app.get("/suspend_scraper/{scraper_id}")
+async def suspend_scraper(scraper_id: str):
+    '''Suspend a scraper'''
+    try:
+        await stop_scraper(scraper_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to suspend scraper: {str(e)}")
+    
+    return {
+        "status": "success",
+        "message": "Scraper suspended successfully"
+    }
+
+@app.get("/start_scraper/{scraper_id}")
+async def start_requested_scraper(scraper_id: str):
+    '''Start a scraper'''
+    try:
+        # Load the latest process info
+        global running_processes
+        running_processes = load_process_info()
+        
+        # Start the scraper if it's not already running
+        if scraper_id not in running_processes or not psutil.pid_exists(running_processes[scraper_id]):
+            await start_scraper(scraper_id)
+        else:
+            print(f"Scraper {scraper_id} is already running with PID {running_processes[scraper_id]}")
+            
+        new_state = await get_scraper_state(scraper_id)
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start scraper: {str(e)}")
+    
+    return {
+        "status": "success",
+        "message": "Scraper started successfully",
+        "new_state": new_state
+    }
+
+# ------- ACCOUNT ENDPOINTS --------
+
+@app.get("/all_accounts")
+async def all_accounts():
+    '''Get all accounts from the database'''
+    try:
+        all_accounts = await get_all_accounts()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch accounts: {str(e)}")
+    
+    return {
+        "status": "success",
+        "accounts": all_accounts
+    }
+
+@app.get("/idle_account")
+async def get_idle_account():
+    '''Get an idle account from the database'''
+    try:
+        idle_account = await get_unassigned_account()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch idle account: {str(e)}")
+    
+    return {
+        "status": "success",
+        "account_available": True if idle_account!= None else False,
+    }
+
+@app.post("/create_account")
 async def save_account(account: AccountModel):
     '''Save an Instagram user account to the database'''
     # Data is automatically extracted from JSON thanks to Pydantic
@@ -59,7 +225,8 @@ async def save_account(account: AccountModel):
         "message": "Account saved successfully"
     }
 
-@app.post("/generate-new-agent")
+# ---------GENERATE SCRAPER, START SCRAPERS ------------
+@app.post("/generate_scraper")
 async def generate_prompt(prompt: Prompt):
 
     # check if a account is availabel
@@ -96,15 +263,75 @@ def scraper_runner(scraper_id):
     asyncio.run(automation_controller(scraper_id))
 
 async def start_scraper(scraper_id):
-    bg_process = multiprocessing.Process(target=scraper_runner, args=(scraper_id,))
+    # Create the process
+    bg_process = Process(target=scraper_runner, args=(scraper_id,))
     bg_process.start()
+    
+    # Store the PID, not the process object
+    running_processes[scraper_id] = bg_process.pid
+    save_process_info(running_processes)
+    
+    print(f"Started scraper {scraper_id} with PID {bg_process.pid}")
+    print("Current running processes:", running_processes)
+    
+    return bg_process.pid
+
+async def stop_scraper(scraper_id):
+    # Reload the dictionary in case it's been updated
+    global running_processes
+    running_processes = load_process_info()
+    
+    print(f"Running stop scraper for {scraper_id}")
+    print(running_processes)
+    
+    if scraper_id in running_processes:
+        process_pid = running_processes[scraper_id]
+        try:
+            # Check if process exists and terminate it
+            if psutil.pid_exists(process_pid):
+                parent = psutil.Process(process_pid)
+                
+                # Terminate child processes first (if any)
+                children = parent.children(recursive=True)
+                for child in children:
+                    child.terminate()
+                
+                # Terminate the main process
+                parent.terminate()
+                
+                # Wait a bit and kill forcefully if needed
+                gone, alive = psutil.wait_procs([parent], timeout=3)
+                if alive:
+                    for p in alive:
+                        p.kill()
+                
+                print(f"Successfully stopped scraper {scraper_id} with PID {process_pid}")
+            else:
+                print(f"Process with PID {process_pid} does not exist anymore")
+        except Exception as e:
+            print(f"Error stopping scraper {scraper_id}: {e}")
+        
+        # Remove from dictionary and save
+        del running_processes[scraper_id]
+        save_process_info(running_processes)
+        return True
+    
+    print(f"Scraper {scraper_id} not found in running processes")
+    return False
+
+async def stop_all_scrapers():
+    # Reload the dictionary
+    global running_processes
+    running_processes = load_process_info()
+    
+    scraper_ids = list(running_processes.keys())
+    for scraper_id in scraper_ids:
+        await stop_scraper(scraper_id)
 
 async def start_all_scrapers():
     # Start all scrapers here
-    ids = await get_all_document_ids()
-
+    ids = await get_all_scraper_ids()
     print("ids = ", ids)
-
     for scraper_id in ids:
         await start_scraper(scraper_id)
 
