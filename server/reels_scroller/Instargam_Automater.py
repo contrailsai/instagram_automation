@@ -540,15 +540,16 @@ class Instagram_Automator:
     async def update_scraper(self, state, data=None):
         self.state = state
         new_time = time.time() - self.start_time
+        self.total_time += new_time
 
         if data != None:
-            data["total_time"] = self.total_time + new_time
+            data["total_time"] = self.total_time
             await update_scraper_data(self.id, data=data)
         else:
             await update_scraper_data(self.id, 
                 data=dict({
                     "state": state,
-                    "total_time": self.total_time + new_time
+                    "total_time": self.total_time
                 })
             )
         
@@ -565,13 +566,16 @@ class Instagram_Automator:
             # Sign-IN
             await self.signIn()
 
+            # New   
             if self.state == "new": 
                 await self.update_scraper("search")
             
+            # Search -> find content, profiles on search page
             if self.state == "search":
                 await self.go_through_search_page()
                 await self.update_scraper("profile_reels")
                 
+            # profile_reels -> go through profiles of users extracting bios and watching relevant reels
             if self.state == "profile_reels":
                 unscraped_profiles = await get_unscraped_profiles(self.id)
                 await self.profiles_reels_watcher(profiles=unscraped_profiles)
@@ -583,10 +587,11 @@ class Instagram_Automator:
                 })
 
             # await page.wait_for_timeout(30*60*1000)
-            start_time = time.time()
+            loop_start_time = time.time()
+            # shift b/w reels, profiles for the given time
+            while time.time()-loop_start_time < self.loop_watch_time:
 
-            while time.time()-start_time < self.loop_watch_time:
-
+                # reels -> watch reels on the /reels pae liking relevant content
                 if self.state == "reels":
                     # WATCH REELS
                     await self.watch_reels()
@@ -600,6 +605,7 @@ class Instagram_Automator:
                 unscraped_profiles = await get_unscraped_profiles(self.id)
                 self.usernames.update(unscraped_profiles)
 
+                # profile_bio -> go though the profiles of reels and get their bios and links
                 if self.state == "profile_bio":
                     # EXTRACT LINKS FROM PROFILES
                     await self.extract_links_from_bios()
@@ -614,23 +620,28 @@ class Instagram_Automator:
             print("keyboard Interrupt")
         except asyncio.CancelledError:
             # Perform cleanup (close browsers, files, etc.)
-            new_time = time.time() - start_time
+            new_time = time.time() - self.start_time
+            self.total_time += new_time
+
             await update_scraper_data(self.id, 
                 data=dict({
                     "reels_seen": self.reels_seen,
                     "relevant_reels_seen": self.relevant_reels_seen,
                     "state": "profile_bio",
-                    "total_time": self.total_time + new_time
+                    "total_time": self.total_time
                 })
             )
+            self.start_time = time.time()
             raise
         finally:
-            new_time = time.time() - start_time
+            new_time = time.time() - self.start_time
+            self.total_time += new_time
             await update_scraper_data(self.id, 
                 data=dict({
                     "reels_seen": self.reels_seen,
                     "relevant_reels_seen": self.relevant_reels_seen,
                     "state": "profile_bio",
-                    "total_time": self.total_time + new_time
+                    "total_time": self.total_time
                 })
             )
+            self.start_time = time.time()

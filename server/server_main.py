@@ -63,7 +63,7 @@ llm_model = genai.GenerativeModel(model_name='gemini-1.5-flash')
 
 @app.get("/")
 async def read_root():
-    return {"message": "Welcome to the Async FastAPI server!"}
+    return {"message": "instagram automated scraper API"}
 
 # ------- SCRAPER ENDPOINTS --------
 @app.get("/all_scrapers")
@@ -255,6 +255,7 @@ async def generate_prompt(prompt: Prompt):
     return {
         "status": "success",
         "message": "Scraper created successfully",
+        "id": document['id']
     }
 
 def scraper_runner(scraper_id):

@@ -25,7 +25,9 @@ async def new_scraper(text: str, topic_attributes, hashtags, scraper_name) -> di
         "text": text,
         "topic_attributes": topic_attributes,
         "hashtags": hashtags,
-        "scraper_name": scraper_name
+        "scraper_name": scraper_name,
+        "active": True,
+        "state": "new"
     }
     result = await collection.insert_one(document)
     return {"id": str(result.inserted_id), **document}
