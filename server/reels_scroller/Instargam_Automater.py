@@ -6,13 +6,16 @@ from pathlib import Path
 from playwright.async_api import Page, Browser, Response
 from typing import Optional
 from playwright.async_api import async_playwright, Page, Locator
+from google import generativeai as genai
 
-from database import update_scraper_data, get_account_by_scraper_id, save_new_auth, save_scraped_content, add_profile, update_profile, get_unscraped_profiles
+from database import update_scraper_data, get_account_by_scraper_id, save_new_auth, save_scraped_content, add_profile, update_profile, get_unscraped_profiles, update_freq_stats
 from reels_scroller.utils import save_profile_data
-import base64
+from llm_instructions import relevancy_check
+
+llm_api_key = os.getenv("GENAI_API_KEY")
 
 class Instagram_Automator:
-    def __init__(self, page: Page, scraper_data):
+    def __init__(self, page: Page, scraper_data: dict):
         self.loop_watch_time = 2*60*60  # 2 hours
         self.usernames = set()
         self.page: Page = page
@@ -32,7 +35,13 @@ class Instagram_Automator:
                 self.topics.add(topic_element)
 
         self.topics_list : list[str] = list(self.topics)
+        
+        self.topic_to_freq : dict = scraper_data.get("topic_stats", dict()).get("freq",  dict())
+
         self.hashtags : list[str] = scraper_data.get("hashtags", [])
+
+        genai.configure(api_key=llm_api_key)
+        self.llm_model = genai.GenerativeModel(model_name='gemini-1.5-flash')
 
 # login based on username, password in env or the auth cookies in the json file
     async def signIn(self) -> bool:
@@ -153,6 +162,10 @@ class Instagram_Automator:
             print(f"Login failed: {str(e)}")
             return False
     
+# confirm relevancy via LLM
+    async def check_caption_relevancy(self, caption: str) -> bool:
+        return await relevancy_check(self.llm_model, caption, self.scraper_data.get("text", ""), self.topics_list)
+
 # ----------- search --------------
 # go throught each post/reel on the search page and find relevant content
     async def go_through_search_page(self, time_to_watch_1: int = 15, timer_to_stop: int = 10*60):
@@ -174,6 +187,8 @@ class Instagram_Automator:
             
             time_to_watch_ms = time_to_watch_1*1000
             start_time = time.time()
+            posts_seen = 0
+
             # watch till the given timer
             while time.time() - start_time < timer_to_stop:
 
@@ -190,14 +205,17 @@ class Instagram_Automator:
                     self.usernames.add(username)
                     await add_profile(self.id, username)  # Add to the database
 
-                # like the post
+                posts_seen+=1
+                if posts_seen > 6:
+                    break
+
+                # TODO: maybe ? like the post
                 # await self.click_like_button(page_type="profile_reels")
                 await self.page.keyboard.press('ArrowRight')
 
                 # Wait for the page to load
                 await self.page.wait_for_timeout(2000)
             
-
 # ----------- reels ---------------
 # watching reels based on the current algorithm, manipulate based on the topics [list of txt] in caption 
     async def reels_scroller(self, reels_data, watch_time = 2*60*60, max_usernames_count = 50):
@@ -217,10 +235,14 @@ class Instagram_Automator:
                     self.reels_seen += 1
                     reel_on_topic = False
 
-                    for topic in self.topics_list:
-                        if topic.lower() in caption.lower():
-                            reel_on_topic = True
-                            break
+                    # check caption for freq incrementation
+                    if caption != "":
+                        for topic in self.topics_list:
+                            if topic.lower() in caption.lower():
+                                # reel_on_topic = True
+                                self.topic_to_freq[topic.lower()] += 1 # freq updates
+                    
+                    reel_on_topic = await self.check_caption_relevancy(caption)
                     
                     if not reel_on_topic:
                         print("skipping")
@@ -245,6 +267,7 @@ class Instagram_Automator:
                     print(f"Error: {e}")
                     print("reel not in data going to next")
 
+                await update_freq_stats(self.id, self.topic_to_freq)
 
                 await self.page.keyboard.press('ArrowDown')
                 await self.page.wait_for_timeout(2*1000) # some breathing space for the url and stuff to update 
@@ -287,6 +310,11 @@ class Instagram_Automator:
 
         for username in profiles:
             print("watching profile reels for:", username)
+            
+            # keep track of seen to avoid suspension/ wasting time watch irrelevant stuff
+            relevant_user_reels_seen = 0
+            user_reels_seen = 0
+
             try:
                 # go to the profile page
                 PROFILE_URL = f"https://www.instagram.com/{username}/reels"
@@ -301,8 +329,7 @@ class Instagram_Automator:
 
                 # wait for reels_data to be loaded
                 while len(reels_data.keys()) == 0:
-                    await asyncio.sleep(1)
-                # print("got data for reels: ", list(reels_data.keys()))
+                    await self.page.wait_for_timeout(1000) # wait 1 sec before rechecking
 
                 await self.page.wait_for_selector('a[href*="/reel/"]', timeout=30*1000)  # Wait for the reels to load
                 # get ready to start watching
@@ -316,33 +343,41 @@ class Instagram_Automator:
                 # watch till the given timer
                 while time.time() - start_time < timer_to_stop:
 
+                    user_reels_seen += 1
+
                     reel_code = self.page.url.split('/')[-1] if self.page.url.split('/')[-1] != "" else self.page.url.split('/')[-2]
                     print(f"{seen_count}. code = {reel_code} |", end=" ")
                     try:
-                        media_data = reels_data[reel_code]
-                        # print(media_data)
+                        media_data: dict = reels_data[reel_code]
 
                         # wait for caption to be there in the data
                         if media_data.get("caption", False):
                             caption: str = media_data["caption"]["text"]
                         else:
-                            while not media_data.get("caption", False):
+                            start_wait_for_caption = time.time()
+                            while not media_data.get("caption", False) and (time.time() - start_wait_for_caption < 20):
                                 await asyncio.sleep(1)
-                            caption:str = media_data["caption"]
+                            caption:str = media_data.get("caption", dict()).get("text", "")
 
                         self.reels_seen += 1
                         reel_on_topic = False
 
-                        for topic in self.topics_list:
-                            if topic.lower() in caption.lower():
-                                reel_on_topic = True
-                                break
+                        # check caption for freq incrementation
+                        if caption != "":
+                            for topic in self.topics_list:
+                                if topic.lower() in caption.lower():
+                                    # reel_on_topic = True
+                                    self.topic_to_freq[topic.lower()] += 1 # freq updates
                         
+                        reel_on_topic = await self.check_caption_relevancy(caption)
+
                         if not reel_on_topic:
                             print("skipping")
-                            await self.page.wait_for_timeout(2*1000) # some delay to not be too fast in skipping
+                            await self.page.wait_for_timeout(5*1000) # some delay to not be too fast in skipping
                             pass
                         else:
+                            print("taken")
+                            relevant_user_reels_seen += 1
                             self.relevant_reels_seen += 1
                             await save_scraped_content(self.id, media_data) # save the scraped content to the database
                             await self.page.wait_for_timeout(10*1000)   # Watch for 10 secs       
@@ -350,25 +385,32 @@ class Instagram_Automator:
                             await self.click_like_button(page_type="profile_reels")
 
                             await self.page.wait_for_timeout(20*1000)  # Watch for 20 more secs
-                            print("taken")
+
                     except Exception as e:
                         print(f"Error: {e}")
                         print("reel not in data going to next")
                         await self.page.wait_for_timeout(2*1000) # some delay to not be too fast
 
-
                     seen_count+=1
+                    await update_freq_stats(self.id, self.topic_to_freq)
+
+                    # evaluate watching:
+                    #       consider we have seen minimum 12 reels and less than 2 reels were on topic. (2/12 = 0.166)
+                    if user_reels_seen >= 12 and (relevant_user_reels_seen/user_reels_seen < 0.166):
+                        raise Exception("Profile Not relevant to topic")
+                    
                     await self.page.keyboard.press('ArrowRight')
 
             except Exception as e:
-                print(f"Error watching profile reels / user has no reels posted")
-                continue
+                print(f"\nError watching profile reels / user has no reels posted\n")
+                print(f"error: {e}")
 
             finally:
+                # save
                 await self.update_scraper("profile_reels", data={
                     "reels_seen": self.reels_seen,
                     "relevant_reels_seen": self.relevant_reels_seen,
-                    "state": "profile_bio"
+                    # "state": "profile_bio"
                 })
 
 # ---------- profiles --------------
@@ -433,13 +475,14 @@ class Instagram_Automator:
                 print(f"Failed to process response from {url}: {str(e)}")
     
         if "comments" in url:
-            response_data = await response.json()
-            text = response_data["caption"]["text"]
-            media_id = response_data["caption"]["media_id"]
+            response_data: dict = await response.json()
+            text = response_data.get("caption", dict()).get("text", "")
+            media_id = response_data.get("caption", dict()).get("media_id", 0)
 
             for reel in reels_data.values():
                 if media_id == reel["pk"]:
-                    reel["caption"] = text
+                    reel["caption"] = dict()
+                    reel["caption"]["text"] = text
 
     async def handle_profile_network(self, response):
         url = response.url
@@ -627,7 +670,6 @@ class Instagram_Automator:
                 data=dict({
                     "reels_seen": self.reels_seen,
                     "relevant_reels_seen": self.relevant_reels_seen,
-                    "state": "profile_bio",
                     "total_time": self.total_time
                 })
             )
@@ -640,7 +682,6 @@ class Instagram_Automator:
                 data=dict({
                     "reels_seen": self.reels_seen,
                     "relevant_reels_seen": self.relevant_reels_seen,
-                    "state": "profile_bio",
                     "total_time": self.total_time
                 })
             )

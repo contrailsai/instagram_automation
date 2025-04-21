@@ -11,7 +11,7 @@ from multiprocessing import Process
 from google import generativeai as genai
 import base64
 from llm_instructions import title_keywords_hashtags_instruction
-from database import get_all_accounts, new_scraper, get_scraper_state, get_all_scrapers, get_all_scraper_ids, get_scraper_data_by_id, insert_account, get_unassigned_account, assign_scraper_to_account, get_reels_data, get_profiles_data, get_links_data
+from database import get_all_accounts, new_scraper, get_scraper_state, get_all_scrapers, get_all_scraper_ids, get_scraper_data_by_id, insert_account, get_unassigned_account, assign_scraper_to_account, get_reels_data, get_profiles_data, get_links_data, update_activity
 from fastapi.middleware.cors import CORSMiddleware
 import psutil 
 import tempfile
@@ -137,6 +137,7 @@ async def suspend_scraper(scraper_id: str):
     '''Suspend a scraper'''
     try:
         await stop_scraper(scraper_id)
+        await update_activity(scraper_id, False)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to suspend scraper: {str(e)}")
     
@@ -156,6 +157,7 @@ async def start_requested_scraper(scraper_id: str):
         # Start the scraper if it's not already running
         if scraper_id not in running_processes or not psutil.pid_exists(running_processes[scraper_id]):
             await start_scraper(scraper_id)
+            await update_activity(scraper_id, True)
         else:
             print(f"Scraper {scraper_id} is already running with PID {running_processes[scraper_id]}")
             

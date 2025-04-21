@@ -1,6 +1,48 @@
 from google.generativeai import GenerativeModel
 import json
 
+async def relevancy_check(llm_model: GenerativeModel, video_caption: str, text_prompt: str, keywords: list[str]) -> bool:
+    instruction = f"""
+    Analyze the given caption for a short video and respond with "yes" or "no" if it is relavant to the topic and keywords of the searched topic. 
+    given :-
+    Text prompt: {text_prompt}
+    Keywords: {" ,".join(keywords)}
+    Caption: {video_caption}
+
+    Here Text prompt is the text by user on the topic he is looking for. 
+    Keywords are the keywords relevant to the topic find through the processing.
+    Caption is the caption of the video which is being checked for relevancy to the topic. 
+
+    Do not include any introductory text, explanations, markdown formatting, or any other text outside of the 1 word "yes" or "no". 
+    JUST GIVE ME THE 1 WORD RESPONSE STRING WITH NO QUOTES OR ANYTHING.
+    """
+
+    contents = [instruction] # Gemini API expects a list of contents
+
+    try:
+        response = await llm_model.generate_content_async(contents=contents)
+
+        # It's crucial to parse the LLM's text response as JSON
+        # Add error handling in case the response is not valid JSON
+        try:
+            # Accessing the generated text
+            llm_output_text: str = response.text
+            llm_output_text: str = llm_output_text.strip() # Remove leading/trailing whitespace
+
+            if "yes" in llm_output_text.lower():
+                return True
+            else:
+                return False
+            
+        except Exception as ve:
+            print(f"Error: LLM response validation failed: {ve}\nResponse text:\n{response.text}")
+            return {"error": f"LLM response validation failed: {ve}", "raw_response": response.text}
+
+    except Exception as e:
+        # Handle potential errors during the API call itself
+        print(f"Error calling Generative AI API: {e}")
+        return {"error": f"Failed to generate content: {e}"}
+    
 async def title_keywords_hashtags_instruction (llm_model: GenerativeModel ,user_text: str) -> str:
 
     instruction = f"""

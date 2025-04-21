@@ -100,7 +100,6 @@ async def set_scraper_activity(document_id: str, new_status: bool) -> dict:
     )
     return True
 
-
 def updated_doc_properties(doc: dict) -> dict:
     update_doc = dict({})
 
@@ -135,6 +134,21 @@ async def update_scraper_data(scraper_id: str, data: dict) -> dict:
         upsert=True
     )
     return {"id": str(result.upserted_id), **data}
+
+async def update_activity(scraper_id: str, new_active_state: bool):
+    collection = db["scrapers"]
+    
+    try:
+        scraper_object_id = ObjectId(scraper_id)
+    except: # invalid id format
+        return None
+
+    result = await collection.update_one(
+        {"_id": scraper_object_id},
+        {"$set": {"active": new_active_state }},
+        upsert=True
+    )
+    return {"id": str(result.upserted_id)}
 
 # ACCOUNTS DATABASE FUNCTIONS
 
@@ -350,3 +364,46 @@ async def save_many_scraped_content(scraper_id: str, contents: list) -> None:
         documents.append(doc)
     # print(len(documents))        
     await collection.insert_many(documents)
+
+
+# FREQUENCY, PRIORITY, of KEYWORDS BASED DATA
+
+# {
+#     "scraper_id": str,
+#     "freq": {
+#         "topic a": 5,
+#         "topic b": 3,
+#     },
+#     "priority": {
+#         "topic a": 1,
+#         "topic b": 5,
+#     }
+# }
+
+async def create_freq_stats(doc: dict):
+    collection = db["keywords_stats"]
+    
+    result = await collection.insert_one(doc)
+    return {"id": str(result.inserted_id)}
+
+async def get_freq_stats(scraper_id: str):
+    try:    
+        collection = db["keywords_stats"]
+        document = await collection.find_one(
+            {"scraper_id": scraper_id},
+            {"_id": 0}
+        )
+        return document
+    except: 
+        return None
+
+async def update_freq_stats(scraper_id: str, new_stats: dict):
+    # select the correct collection
+    collection = db["keywords_stats"]
+    
+    await collection.update_one(
+        {"scraper_id": scraper_id},
+        {"$set": {"freq": new_stats}},
+        upsert=True
+    )
+    return
