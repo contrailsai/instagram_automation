@@ -29,6 +29,7 @@ async def relevancy_check(llm_model: GenerativeModel, video_caption: str, text_p
             llm_output_text: str = response.text
             llm_output_text: str = llm_output_text.strip() # Remove leading/trailing whitespace
 
+            # print(instruction)
             if "yes" in llm_output_text.lower():
                 return True
             else:

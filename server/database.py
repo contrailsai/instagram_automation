@@ -27,7 +27,8 @@ async def new_scraper(text: str, topic_attributes, hashtags, scraper_name) -> di
         "hashtags": hashtags,
         "scraper_name": scraper_name,
         "active": True,
-        "state": "new"
+        "state": "new",
+        "is_suspended": False
     }
     result = await collection.insert_one(document)
     return {"id": str(result.inserted_id), **document}
@@ -150,6 +151,22 @@ async def update_activity(scraper_id: str, new_active_state: bool):
     )
     return {"id": str(result.upserted_id)}
 
+async def scraper_check_suspended(scraper_id: str) -> bool :
+    collection = db["scrapers"]
+    
+    try:
+        scraper_object_id = ObjectId(scraper_id)
+    except: # invalid id format
+        return None
+
+    result = await collection.find_one(
+        {"_id": scraper_object_id},
+        {"is_suspended": 1}
+    )
+    if result["is_suspended"]:
+        return True
+    return False
+
 # ACCOUNTS DATABASE FUNCTIONS
 
 async def insert_account(account_data: dict) -> dict:
@@ -263,12 +280,55 @@ async def update_profile(scraper_id: str, username: str, data: dict) -> dict:
     )
     return {"id": str(result.upserted_id), **data}
 
+async def update_profile_data(username: str, data: dict):
+     # select the correct collection
+    collection = db["scrape_profiles"]
+
+    result = await collection.update_one(
+        {"username": username},
+        {
+            "$set": data
+        }
+    )
+    return True
+
 async def get_unscraped_profiles(scraper_id: str) -> list:
     # select the correct collection
     collection = db["scrape_profiles"]
 
     documents = await collection.find({"scraper_id": scraper_id, "scraped": False}, {"username": 1, "_id": 0}).to_list(length=None)
     return [doc["username"] for doc in documents]
+
+async def profiles_with_links(scraper_id: str) -> list:
+    collection = db["scrape_profiles"]
+
+    documents = await collection.find(
+        {"scraper_id": scraper_id, "links": {"$exists": True, "$ne": []}, "is_suspicious": {"$exists": False}},
+        {"username": 1, "links": 1, "_id": 0}
+    ).to_list(length=None)
+    
+    response = []
+    for doc in documents:
+        response.append({
+            "username": doc["username"],
+            "links": doc["links"],
+        })
+
+    return response
+
+
+async def get_profiles_data(scraper_id: str) -> dict:
+        # select the correct collection
+    collection = db["scrape_profiles"]
+
+    documents = await collection.find({"scraper_id": scraper_id, "scraped": True}).to_list(length=None)
+    return [dict({
+        "id": str(doc["_id"]),
+        "username": doc["username"],
+        "bio": doc["bio"],
+        "links": doc["links"],
+        "is_suspicious": doc.get("is_suspicious", )
+    }) for doc in documents]
 
 # SCRAPED CONTENT DATABASE FUNCTIONS
 
@@ -287,18 +347,6 @@ async def get_reels_data(scraper_id: str) -> dict:
         "username": doc["username"],
         "caption": doc["caption"]
         # "location": doc["location"]
-    }) for doc in documents]
-
-async def get_profiles_data(scraper_id: str) -> dict:
-        # select the correct collection
-    collection = db["scrape_profiles"]
-
-    documents = await collection.find({"scraper_id": scraper_id, "scraped": True}).to_list(length=None)
-    return [dict({
-        "id": str(doc["_id"]),
-        "username": doc["username"],
-        "bio": doc["bio"],
-        "links": doc["links"],
     }) for doc in documents]
 
 async def get_links_data(scraper_id: str) -> dict:

@@ -41,7 +41,7 @@ class Instagram_Automator:
         self.hashtags : list[str] = scraper_data.get("hashtags", [])
 
         genai.configure(api_key=llm_api_key)
-        self.llm_model = genai.GenerativeModel(model_name='gemini-1.5-flash')
+        self.llm_model = genai.GenerativeModel(model_name='gemini-2.0-flash')
 
 # login based on username, password in env or the auth cookies in the json file
     async def signIn(self) -> bool:
@@ -171,8 +171,8 @@ class Instagram_Automator:
     async def go_through_search_page(self, time_to_watch_1: int = 15, timer_to_stop: int = 10*60):
         """Go through the search page and like relevant posts"""
 
-        for hashtag in self.hashtags:
-            SEARCH_URL = "https://www.instagram.com/explore/search/keyword/?q="+ hashtag.replace("#", "%23")
+        for topic in self.topics_list:
+            SEARCH_URL = f"https://www.instagram.com/explore/search/keyword/?q=%23{topic}"
             await self.page.goto(SEARCH_URL)
 
             await self.page.wait_for_timeout(2000)  # Wait for the page to load

@@ -11,7 +11,7 @@ from multiprocessing import Process
 from google import generativeai as genai
 import base64
 from llm_instructions import title_keywords_hashtags_instruction
-from database import get_all_accounts, new_scraper, get_scraper_state, get_all_scrapers, get_all_scraper_ids, get_scraper_data_by_id, insert_account, get_unassigned_account, assign_scraper_to_account, get_reels_data, get_profiles_data, get_links_data, update_activity
+from database import get_all_accounts, new_scraper, scraper_check_suspended, get_scraper_state, get_all_scrapers, get_all_scraper_ids, get_scraper_data_by_id, insert_account, get_unassigned_account, assign_scraper_to_account, get_reels_data, get_profiles_data, get_links_data, update_activity
 from fastapi.middleware.cors import CORSMiddleware
 import psutil 
 import tempfile
@@ -150,6 +150,12 @@ async def suspend_scraper(scraper_id: str):
 async def start_requested_scraper(scraper_id: str):
     '''Start a scraper'''
     try:
+        is_suspended: bool = await scraper_check_suspended(scraper_id)
+        if is_suspended:
+            return {
+                "status": "failure", 
+                "message": "scraper was suspended",
+            }
         # Load the latest process info
         global running_processes
         running_processes = load_process_info()
@@ -266,6 +272,9 @@ def scraper_runner(scraper_id):
     asyncio.run(automation_controller(scraper_id))
 
 async def start_scraper(scraper_id):
+    is_suspended: bool = await scraper_check_suspended(scraper_id)
+    if is_suspended:
+        return False
     # Create the process
     bg_process = Process(target=scraper_runner, args=(scraper_id,))
     bg_process.start()
