@@ -495,7 +495,6 @@ async def get_link_data(link_id: str)-> dict:
 
     return result
 
-
 async def get_links_data(scraper_id: str) -> dict:
     # select the correct collection
     collection = db["links"]
@@ -531,3 +530,20 @@ async def save_links_data(data : dict, scraper_id: str):
         documents.append(doc)
     # print(len(documents))        
     await collection.insert_many(documents)
+
+async def update_link_state(link_id: str, data: dict):
+    # select the correct collection
+    collection = db["links"]
+
+    try:
+        link_object_id = ObjectId(link_id)
+    except: # invalid id format
+        return None
+
+    result = await collection.update_one(
+        {"_id": link_object_id},
+        {
+            "$set": data
+        }
+    )
+    return True

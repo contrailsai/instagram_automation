@@ -11,7 +11,7 @@ from multiprocessing import Process
 from google import generativeai as genai
 import base64
 from llm_instructions import title_keywords_hashtags_instruction
-from database import get_all_accounts, get_scraper_name, new_scraper, scraper_check_suspended, get_scraper_state, get_all_scrapers, get_all_scraper_ids, get_scraper_data_by_id, insert_account, get_unassigned_account, assign_scraper_to_account, get_reels_data, get_profiles_data, get_links_data, get_all_links_data, update_activity, get_link_data, get_profile_data
+from database import get_all_accounts, get_scraper_name, new_scraper, scraper_check_suspended, get_scraper_state, get_all_scrapers, get_all_scraper_ids, get_scraper_data_by_id, insert_account, get_unassigned_account, assign_scraper_to_account, get_reels_data, get_profiles_data, get_links_data, get_all_links_data, update_activity, get_link_data, get_profile_data, update_link_state
 from fastapi.middleware.cors import CORSMiddleware
 import psutil 
 import tempfile
@@ -180,8 +180,14 @@ async def data_of_link(link_id: str):
             "profiles": profiles_data,
             "suspicious": link["suspicious"],
             "campaign_id": link["scraper_id"],
-            "campaign_name": scraper_name
+            "campaign_name": scraper_name,
+            "manual_check_result": link["manual_check_result"],
+            "state": link["state"],
         }
+
+        if link.get("review_notes", False):
+            formated_link["review_notes"] = link["review_notes"]
+
     except Exception as e:
         print(e)
         raise HTTPException(status_code=500, detail=f"Failed to fetch scraper: {str(e)}")
@@ -189,6 +195,26 @@ async def data_of_link(link_id: str):
     return {
         "status": "success",
         "link": formated_link
+    }
+
+class StatusUpdate(BaseModel):
+    status: str
+    notes: str
+    
+@app.post("/links/{link_id}/status")
+async def update_link_status(link_id: str, update_data: StatusUpdate):
+    '''Update the status of a link'''
+    try:
+        await update_link_state(link_id, {
+            "manual_check_result": update_data.status, 
+            "review_notes": update_data.notes
+        })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update link status: {str(e)}")
+    
+    return {
+        "status": "success",
+        "message": "Link status updated successfully"
     }
 
 
