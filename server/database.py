@@ -33,6 +33,18 @@ async def new_scraper(text: str, topic_attributes, hashtags, scraper_name) -> di
     result = await collection.insert_one(document)
     return {"id": str(result.inserted_id), **document}
 
+async def get_scraper_name(scraper_id)-> str:
+    collection = db["scrapers"]
+    try:
+        scraper_object_id = ObjectId(scraper_id)
+    except: # invalid id format
+        return None
+    result: dict = await collection.find_one(
+        {"_id": scraper_object_id},
+        {"scraper_name": 1}
+    )
+    return result.get("scraper_name", "")
+
 async def get_all_scrapers() -> list:
     # select the correct collection
     collection = db["scrapers"]
@@ -81,6 +93,11 @@ async def get_scraper_data_by_id(document_id: str) -> dict:
         return None
     
     document = await collection.find_one({"_id": object_id}, {"_id": 0})
+
+    links_data = await get_links_data(document_id)
+    if links_data:
+        document["links"] = links_data
+
     if document:
         document["id"] = str(document_id)
         return document
@@ -280,6 +297,16 @@ async def update_profile(scraper_id: str, username: str, data: dict) -> dict:
     )
     return {"id": str(result.upserted_id), **data}
 
+async def get_profile_data(username: str):
+     # select the correct collection
+    collection = db["scrape_profiles"]
+
+    result = await collection.find_one(
+        {"username": username},
+        {"_id": 0}
+    )
+    return result
+
 async def update_profile_data(username: str, data: dict):
      # select the correct collection
     collection = db["scrape_profiles"]
@@ -327,7 +354,7 @@ async def get_profiles_data(scraper_id: str) -> dict:
         "username": doc["username"],
         "bio": doc["bio"],
         "links": doc["links"],
-        "is_suspicious": doc.get("is_suspicious", )
+        "is_suspicious": doc.get("is_suspicious", "")
     }) for doc in documents]
 
 # SCRAPED CONTENT DATABASE FUNCTIONS
@@ -348,17 +375,6 @@ async def get_reels_data(scraper_id: str) -> dict:
         "caption": doc["caption"]
         # "location": doc["location"]
     }) for doc in documents]
-
-async def get_links_data(scraper_id: str) -> dict:
-    # select the correct collection
-    collection = db["scrape_profiles"]
-    links = set()
-    documents = await collection.find({"scraper_id": scraper_id, "scraped": True}, {"links": 1}).to_list(length=None)
-    for doc in documents:
-        for link in doc["links"]:
-            links.add(link)
-
-    return list(links)
 
 def create_doc(media):
     try:
@@ -455,3 +471,63 @@ async def update_freq_stats(scraper_id: str, new_stats: dict):
         upsert=True
     )
     return
+
+
+# LINKS
+
+# {
+#     "link": "https://....",
+#     "profiles": ["username-1", "username2"],
+#     "suspicious": "",
+#     "state": "",
+#     "manual_check_result": ""
+# }
+
+async def get_link_data(link_id: str)-> dict:
+    collection = db["links"]
+     
+    try:
+        link_object_id = ObjectId(link_id)
+    except: # invalid id format
+        return None
+
+    result = await collection.find_one({"_id": link_object_id}, {"_id": 0})
+
+    return result
+
+
+async def get_links_data(scraper_id: str) -> dict:
+    # select the correct collection
+    collection = db["links"]
+    links = set()
+    documents = await collection.find({"scraper_id": scraper_id, }, {"_id": 0}).to_list(length=None)
+    
+    return list(documents)
+
+async def get_all_links_data() -> list:
+    # select the correct collection
+    collection = db["links"]
+    documents = await collection.find({}).to_list(length=None)
+
+    return [{"id": str(doc["_id"]), **doc} for doc in documents]
+
+async def save_links_data(data : dict, scraper_id: str):
+    # select the correct collection
+    collection = db["links"]
+
+    documents = []
+    # print(len(contents))
+    for link in data.keys():
+
+        doc = dict({
+            "link": link,
+            "profiles": data[link]["profiles"],
+            "suspicious": data[link].get("suspicious", ""),
+            "state": "",
+            "manual_check_result": "",
+            "scraper_id": scraper_id
+        })
+
+        documents.append(doc)
+    # print(len(documents))        
+    await collection.insert_many(documents)

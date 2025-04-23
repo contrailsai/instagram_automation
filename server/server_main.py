@@ -11,7 +11,7 @@ from multiprocessing import Process
 from google import generativeai as genai
 import base64
 from llm_instructions import title_keywords_hashtags_instruction
-from database import get_all_accounts, new_scraper, scraper_check_suspended, get_scraper_state, get_all_scrapers, get_all_scraper_ids, get_scraper_data_by_id, insert_account, get_unassigned_account, assign_scraper_to_account, get_reels_data, get_profiles_data, get_links_data, update_activity
+from database import get_all_accounts, get_scraper_name, new_scraper, scraper_check_suspended, get_scraper_state, get_all_scrapers, get_all_scraper_ids, get_scraper_data_by_id, insert_account, get_unassigned_account, assign_scraper_to_account, get_reels_data, get_profiles_data, get_links_data, get_all_links_data, update_activity, get_link_data, get_profile_data
 from fastapi.middleware.cors import CORSMiddleware
 import psutil 
 import tempfile
@@ -131,6 +131,66 @@ async def links_scraper(scraper_id: str):
         "status": "success",
         "links": links
     }
+
+@app.get("/links/")
+async def links_scraper():
+    '''Get a specific scraper from the database'''
+    try:
+        links = await get_all_links_data()
+        scrapers_data = await get_all_scrapers()
+        
+        scraper_name = dict()
+        for scraper in scrapers_data:
+            scraper_name[ scraper["id"] ] = scraper["title"]
+        
+        formated_links =[] 
+
+        for link in links:
+            formated_links.append({
+                "link_id": link["id"],
+                "link": link["link"],
+                "profiles": link["profiles"],
+                "suspicious": link["suspicious"],
+                "campaign_id": link["scraper_id"],
+                "campaign_name": scraper_name.get(link["scraper_id"], ""),
+                "manual_check_result": link["manual_check_result"],
+                "state": link["state"],
+            })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch scraper: {str(e)}")
+    
+    return {
+        "status": "success",
+        "links": formated_links
+    }
+
+@app.get("/data-of-link/{link_id}")
+async def data_of_link(link_id: str):
+    try:
+        link = await get_link_data(link_id)
+        scraper_name = await get_scraper_name(link["scraper_id"])
+
+        profiles_data = dict()
+        for profile in link["profiles"]:
+            profiles_data[profile] = await get_profile_data(profile)
+
+        formated_link = {
+            "link_id": link_id,
+            "link": link["link"],
+            "profiles": profiles_data,
+            "suspicious": link["suspicious"],
+            "campaign_id": link["scraper_id"],
+            "campaign_name": scraper_name
+        }
+    except Exception as e:
+        print(e)
+        raise HTTPException(status_code=500, detail=f"Failed to fetch scraper: {str(e)}")
+    
+    return {
+        "status": "success",
+        "link": formated_link
+    }
+
 
 @app.get("/suspend_scraper/{scraper_id}")
 async def suspend_scraper(scraper_id: str):
