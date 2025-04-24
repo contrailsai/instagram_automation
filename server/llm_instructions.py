@@ -119,4 +119,43 @@ async def title_keywords_hashtags_instruction (llm_model: GenerativeModel ,user_
         # Handle potential errors during the API call itself
         print(f"Error calling Generative AI API: {e}")
         return {"error": f"Failed to generate content: {e}"}
-    
+
+async def website_relevancy_check(llm_model: GenerativeModel, html_content: str, scraper_text: str):
+    instruction = f"""
+    Analyze the following HTML content of a website and determine if it is relevant to the topic of {scraper_text}. 
+    Respond with "yes" or "no" based on its relevancy.
+
+    Here, the HTML content is provided as a string. 
+    Your response MUST be a single word: either "yes" or "no".
+
+    Do not include any introductory text, explanations, markdown formatting, or any other text outside of the 1 word "yes" or "no". 
+    JUST GIVE ME THE 1 WORD RESPONSE STRING WITH NO QUOTES OR ANYTHING.
+
+    HTML Content: {html_content}
+    """
+
+    contents = [instruction] # Gemini API expects a list of contents
+
+    try:
+        response = await llm_model.generate_content_async(contents=contents)
+
+        # It's crucial to parse the LLM's text response as JSON
+        # Add error handling in case the response is not valid JSON
+        try:
+            # Accessing the generated text
+            llm_output_text: str = response.text
+            llm_output_text: str = llm_output_text.strip() # Remove leading/trailing whitespace
+
+            if "yes" in llm_output_text.lower():
+                return True
+            else:
+                return False
+            
+        except Exception as ve:
+            print(f"Error: LLM response validation failed: {ve}\nResponse text:\n{response.text}")
+            return {"error": f"LLM response validation failed: {ve}", "raw_response": response.text}
+
+    except Exception as e:
+        # Handle potential errors during the API call itself
+        print(f"Error calling Generative AI API: {e}")
+        return {"error": f"Failed to generate content: {e}"}

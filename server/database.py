@@ -97,6 +97,8 @@ async def get_scraper_data_by_id(document_id: str) -> dict:
     links_data = await get_links_data(document_id)
     if links_data:
         document["links"] = links_data
+    else:
+        document["links"] = []
 
     if document:
         document["id"] = str(document_id)
@@ -499,9 +501,16 @@ async def get_links_data(scraper_id: str) -> dict:
     # select the correct collection
     collection = db["links"]
     links = set()
-    documents = await collection.find({"scraper_id": scraper_id, }, {"_id": 0}).to_list(length=None)
+    documents: list[dict] = await collection.find({"scraper_id": scraper_id, }).to_list(length=None)
     
-    return list(documents)
+    final_result = []
+
+    for doc in documents:
+        doc["id"] = str(doc["_id"])
+        doc["_id"] = str(doc["_id"])
+        doc.pop("screenshot", None)
+        final_result.append(doc)
+    return final_result
 
 async def get_all_links_data() -> list:
     # select the correct collection
@@ -532,6 +541,23 @@ async def save_links_data(data : dict, scraper_id: str):
     await collection.insert_many(documents)
 
 async def update_link_state(link_id: str, data: dict):
+    # select the correct collection
+    collection = db["links"]
+
+    try:
+        link_object_id = ObjectId(link_id)
+    except: # invalid id format
+        return None
+
+    result = await collection.update_one(
+        {"_id": link_object_id},
+        {
+            "$set": data
+        }
+    )
+    return True
+
+async def update_link_data(link_id: str, data: dict):
     # select the correct collection
     collection = db["links"]
 

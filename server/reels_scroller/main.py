@@ -2,7 +2,16 @@ import asyncio
 from playwright.async_api import async_playwright, Page, Locator
 from dotenv import load_dotenv
 from reels_scroller.Instargam_Automater import Instagram_Automator
-from database import get_scraper_data_by_id, set_scraper_activity, get_freq_stats, create_freq_stats, profiles_with_links, update_profile_data
+from database import get_scraper_data_by_id, set_scraper_activity, get_freq_stats, create_freq_stats, get_links_data, update_link_data, profiles_with_links, update_profile_data
+import os 
+from google import generativeai as genai
+from google.generativeai import GenerativeModel
+from llm_instructions import website_relevancy_check
+import base64
+from io import BytesIO
+
+
+llm_api_key = os.getenv("GENAI_API_KEY")
 
 load_dotenv()
 
@@ -49,19 +58,26 @@ async def main(scraper_id: str):
                 ]
             )
 
-            page2 = await browser.new_page()
+            # # GO THROUGH WEBSITES
+            # page2 = await browser.new_page()
 
-            profiles_link_data = await profiles_with_links(scraper_id)
+            # # profiles_link_data = await profiles_with_links(scraper_id)
+            # links_data = await get_links_data(scraper_id)
 
-            for profile in profiles_link_data:
-                
-                is_suspicious = False
-                for link in profile["links"]:
-                    is_suspicious = is_suspicious or await check_if_suspicious_link(page2, link)
+            # genai.configure(api_key=llm_api_key)
+            # llm_model = genai.GenerativeModel(model_name='gemini-2.0-flash')
+            
+            # for link_data in links_data:
+            #     resp = await check_if_suspicious_link(page2, link_data["link"], scraper_data, llm_model)
+            #     update_data = dict({
+            #         "suspicious": resp["is_relevant"],
+            #         "screenshot": resp["screenshot_base64"],
+            #     })
+            #     print("link_data = ", link_data)
+            #     await update_link_data(link_data["id"], update_data)
 
-                await update_profile_data(profile["username"], {"is_suspicious": is_suspicious})
-
-            # instagram automator
+            
+            # Instagram Automator
             page1 = await browser.new_page()
 
             status = True
@@ -72,6 +88,8 @@ async def main(scraper_id: str):
             print("Closing browser...")
             await browser.close()
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             print(f"Error in loop_runner: {str(e)}")
             await set_scraper_activity(scraper_id, False)
             status = False
@@ -80,27 +98,55 @@ async def main(scraper_id: str):
         await set_scraper_activity(scraper_id, False)
         status = False
 
-async def check_if_suspicious_link(page: Page, link: str):
+async def check_if_suspicious_link(page: Page, link: str, scraper_data: dict, llm_model: GenerativeModel) -> dict:
     try:
         # Validate the link format
         if not link.startswith("http://") and not link.startswith("https://"):
             print(f"Invalid URL format: {link}")
-            return False
+            return {"is_relevant": False, "screenshot_base64": None}
 
         # Navigate to the link with a delay
         await page.goto(link, timeout=30000)  # Increased timeout to handle slow-loading pages
         await asyncio.sleep(3)  # Adding a delay to avoid going too fast
-        content = await page.content()
-        suspicious_keywords = ["win cash", "real money", "fantasy betting", "gambling", "casino", "betting", "wager", "poker", "lottery"]
-        
-        if any(keyword in content.lower() for keyword in suspicious_keywords):
-            print(f"Suspicious link detected: {link}")
-            return True
-        else:
-            print(f"Link is safe: {link}")
-            return False
+        # content = await page.content()
+
+        # Extract Content from the page for llm
+        title = await page.title()
+        # Meta description
+        meta = await page.query_selector("meta[name='description']")
+        meta_description = await meta.get_attribute("content") if meta else ""
+
+        # meta_description = await page.locator("meta[name='description']").get_attribute("content")
+        # if not meta_description:
+        #     meta_description = ""
+
+        # Headings
+        headings = await page.locator("h1, h2, h3").all_inner_texts()
+        headings_text = " | ".join(headings)
+
+        # Body text preview
+        body_text = await page.locator("body").inner_text()
+        body_preview = body_text[:1500]  # Limit tokens
+
+        content = f"""
+                Title: {title}
+                Meta Description: {meta_description}
+                Headings: {headings_text}
+                Body Preview: {body_preview}
+                """
+
+        # Perform relevancy check using LLM
+        response = await website_relevancy_check(llm_model, content, scraper_data["text"])
+
+        # Take a screenshot and encode it in base64
+        screenshot_bytes = await page.screenshot(type="jpeg")
+        screenshot_base64 = base64.b64encode(screenshot_bytes).decode("utf-8")
+
+        return {"is_relevant": response, "screenshot_base64": screenshot_base64}
+
     except Exception as e:
         print(f"Error checking link {link}: {str(e)}")
+        return {"is_relevant": False, "screenshot_base64": None}
 
 if __name__ == '__main__':
     asyncio.run(main())

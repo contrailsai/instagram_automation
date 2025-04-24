@@ -183,6 +183,7 @@ async def data_of_link(link_id: str):
             "campaign_name": scraper_name,
             "manual_check_result": link["manual_check_result"],
             "state": link["state"],
+            "preview_image": link["screenshot"],
         }
 
         if link.get("review_notes", False):
