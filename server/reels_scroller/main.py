@@ -2,7 +2,12 @@ import asyncio
 from playwright.async_api import async_playwright, Page, Locator
 from dotenv import load_dotenv
 from reels_scroller.Instargam_Automater import Instagram_Automator
-from database import get_scraper_data_by_id, set_scraper_activity, get_freq_stats, create_freq_stats, get_links_data, update_link_data, profiles_with_links, update_profile_data, get_links_to_check, get_all_non_filtered_ads, update_ad_data
+
+from server.database.scrapers import get_scraper_data_by_id, set_scraper_activity, get_freq_stats, create_freq_stats
+from server.database.links import get_links_data, update_link_data, get_links_to_check
+from server.database.profiles import  profiles_with_links, update_profile_data
+from server.database.ads import update_ad_data, get_all_non_filtered_ads
+
 import os 
 from google import generativeai as genai
 from google.generativeai import GenerativeModel

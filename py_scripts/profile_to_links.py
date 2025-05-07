@@ -1,5 +1,5 @@
 
-from server.database import get_profiles_data, save_links_data, get_targeted_app_profiles
+from server.database.database import get_profiles_data, save_links_data, get_targeted_app_profiles
 import asyncio
 
 

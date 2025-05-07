@@ -348,7 +348,6 @@ async def profiles_with_links(scraper_id: str) -> list:
 
     return response
 
-
 async def get_profiles_data(scraper_id: str) -> dict:
         # select the correct collection
     collection = db["scrape_profiles"]

@@ -38,7 +38,6 @@ async def click_like_button(page: Page):
     await page.wait_for_timeout(300)  # Pause for visibility
     await page.mouse.click(x, y, button="left")
 
-
 def add_username_to_potential_list(username):
     try:
         with open("potential_profiles_list.txt", "a") as f:

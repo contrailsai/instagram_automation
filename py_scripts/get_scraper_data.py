@@ -1,5 +1,5 @@
 
-from server.database import get_profiles_data, get_reels_data, get_links_data, get_ads_data
+from server.database.database import get_profiles_data, get_reels_data, get_links_data, get_ads_data
 import asyncio
 import json
 

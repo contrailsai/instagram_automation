@@ -1,4 +1,4 @@
-from server.database import get_all_sus_ads_links, get_all_sus_links
+from server.database.database import get_all_sus_ads_links, get_all_sus_links
 
 import asyncio
 

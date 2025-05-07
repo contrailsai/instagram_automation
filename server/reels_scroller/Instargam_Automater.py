@@ -8,7 +8,13 @@ from typing import Optional
 from playwright.async_api import async_playwright, Page, Locator, ElementHandle
 from google import generativeai as genai
 
-from database import update_scraper_data, get_account_by_scraper_id, save_new_auth, save_scraped_content, add_profile, update_profile, get_unscraped_profiles, update_freq_stats, get_targeted_app_profiles, get_targeted_apps, insert_ads_data
+from server.database.scrapers import update_scraper_data, update_freq_stats
+from server.database.accounts import get_account_by_scraper_id, save_new_auth
+from server.database.content import save_scraped_content
+from server.database.profiles import add_profile, update_profile, get_unscraped_profiles
+from server.database.targeted_apps import get_targeted_app_profiles, get_targeted_apps
+from server.database.ads import insert_ads_data
+
 from reels_scroller.utils import save_profile_data
 from llm_instructions import relevancy_check
 

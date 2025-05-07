@@ -11,7 +11,15 @@ from multiprocessing import Process
 from google import generativeai as genai
 import base64
 from llm_instructions import title_keywords_hashtags_instruction
-from database import get_targeted_app, get_targeted_apps, insert_targeted_app, get_all_accounts, get_scraper_name, new_scraper, scraper_check_suspended, get_scraper_state, get_all_scrapers, get_all_scraper_ids, get_scraper_data_by_id, insert_account, get_unassigned_account, assign_scraper_to_account, get_reels_data, get_profiles_data, get_links_data, get_all_links_data, update_activity, get_link_data, get_profile_data, update_link_state, get_ads_data
+
+from server.database.scrapers import get_scraper_name, get_scraper_name, new_scraper, scraper_check_suspended, get_scraper_state, get_all_scrapers, get_all_scraper_ids, get_scraper_data_by_id, update_activity
+from server.database.accounts import get_all_accounts, insert_account, get_unassigned_account, assign_scraper_to_account
+from server.database.profiles import get_profiles_data, get_profile_data
+from server.database.links import get_links_data, get_all_links_data, get_link_data, update_link_state
+from server.database.content import get_reels_data
+from server.database.ads import get_ads_data
+from server.database.targeted_apps import get_targeted_app, get_targeted_apps, insert_targeted_app
+
 from fastapi.middleware.cors import CORSMiddleware
 import psutil 
 import tempfile
