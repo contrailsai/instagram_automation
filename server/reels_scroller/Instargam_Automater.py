@@ -5,10 +5,10 @@ import time
 from pathlib import Path
 from playwright.async_api import Page, Browser, Response
 from typing import Optional
-from playwright.async_api import async_playwright, Page, Locator
+from playwright.async_api import async_playwright, Page, Locator, ElementHandle
 from google import generativeai as genai
 
-from database import update_scraper_data, get_account_by_scraper_id, save_new_auth, save_scraped_content, add_profile, update_profile, get_unscraped_profiles, update_freq_stats
+from database import update_scraper_data, get_account_by_scraper_id, save_new_auth, save_scraped_content, add_profile, update_profile, get_unscraped_profiles, update_freq_stats, get_targeted_app_profiles, get_targeted_apps, insert_ads_data
 from reels_scroller.utils import save_profile_data
 from llm_instructions import relevancy_check
 
@@ -201,12 +201,12 @@ class Instagram_Automator:
                 profile_link = await username_a_tag.get_attribute("href")
                 if profile_link:
                     username = profile_link.strip("/").split("/")[-1]
-                    print(username)
+                    # print(username)
                     self.usernames.add(username)
                     await add_profile(self.id, username)  # Add to the database
 
                 posts_seen+=1
-                if posts_seen > 6:
+                if posts_seen >= 6:
                     break
 
                 # TODO: maybe ? like the post
@@ -436,8 +436,360 @@ class Instagram_Automator:
 
         save_profile_data(self.bio_data)
 
+#------------ TARGET APP --------------
+# search for the target app and its information
+    async def scraper_target_app(self, target_app_id: Optional[int] = 0):
+        """Search for the target app and its information"""
+
+        targeted_apps = await get_targeted_apps(self.id)
+
+        # get the target app data
+        target_app_data = targeted_apps[0]
+        print(target_app_data)
+        # target_app_data = {
+        #     "target_app_id": target_app_id,
+        #     "keywords": ["govindia", "betting", "govinda365"],
+        #     "app_name": "govinda365"
+        # }   
+
+        # Search the instagram search page for the app name
+        # ---> go through posts liking stuff
+        #----------------
+        # posts_data = dict()
+        # # network request tracking
+        # self.page.on("response", lambda response: self.handle_search_network(response, posts_data))
+        # seen_count = 1
+
+        # # visit the searhc page
+        # SEARCH_URL = f"https://www.instagram.com/explore/search/keyword/?q={target_app_data.get('app_name', '')}"
+        # await self.page.goto(SEARCH_URL)
+
+        # while( len(posts_data.keys()) == 0):
+        #     print(".", end="")
+        #     await self.page.wait_for_timeout(1*1000) # wait for the page posts to load
+        
+        # await self.page.wait_for_selector('a[href*="/p/"]', timeout=30*1000)  # Wait for the reels to load
+        # # get ready to start watching
+        # a_tag : Locator = self.page.locator(f'a[href*="/p/"]')  # Select the first matching <a> tag
+        # a_tag = a_tag.first  # Get the first matching <a> tag
+        # if await a_tag.is_visible():
+        #     await a_tag.click() 
+        #     print("clicked the first reel")
+
+        # while seen_count <= 12:
+
+        #     post_code = self.page.url.split('/')[-1] if self.page.url.split('/')[-1] != "" else self.page.url.split('/')[-2]
+        #     print(f"{seen_count}. code = {post_code} |", end=" ")
+        #     try:
+        #         media_data: dict = posts_data[post_code]
+
+        #         # wait for caption to be there in the data
+        #         caption: str = media_data["caption"]["text"]
+
+        #         post_on_topic = False
+
+        #         # check caption for freq incrementation
+        #         if caption != "":
+        #             for topic in self.topics_list:
+        #                 if topic.lower() in caption.lower():
+        #                     # reel_on_topic = True
+        #                     self.topic_to_freq[topic.lower()] += 1 # freq updates
+                
+        #         post_on_topic = await relevancy_check(self.llm_model, caption, target_app_data.get("app_name", ""), target_app_data.get("keywords", []))
+
+        #         if not post_on_topic:
+        #             print("skipping")
+        #             await self.page.wait_for_timeout(5*1000) # some delay to not be too fast in skipping
+        #             pass
+        #         else:
+        #             print("taken")
+        #             media_data["target_app_id"] = target_app_id
+        #             await save_scraped_content(self.id, media_data) # save the scraped content to the database
+
+        #             # mark profile to check                    
+        #             profile_username = media_data["username"]
+        #             # self.usernames.add(profile_username)
+
+        #             await add_profile(self.id, profile_username, target_app_id) # add to the database
+        #             # self.add_username_to_potential_list(profile_username)
+
+        #             await self.page.wait_for_timeout(10*1000)   # Watch for 10 secs       
+        #             # like reel
+        #             await self.click_like_button(page_type="profile_reels")
+
+        #             await self.page.wait_for_timeout(20*1000)  # Watch for 20 more secs
+
+        #     except Exception as e:
+        #         print(f"Error: {e}")
+        #         print("reel not in data going to next")
+        #         await self.page.wait_for_timeout(2*1000) # some delay to not be too fast
+
+        #     seen_count+=1
+        #     await update_freq_stats(self.id, self.topic_to_freq)
+
+        #     await self.page.keyboard.press('ArrowRight')
+
+        # print("SEARCH POSTS FOR TARGET APP COMPLETE")
+
+        # ---> crawl through the profiles content for more similar info  
+        profiles_data = await get_targeted_app_profiles(target_app_id)
+
+        profiles = [profile["username"] for profile in profiles_data]
+
+        # go through profiles
+        print("----PROFILE REELS WATCHER----")
+        reels_data = dict()
+        self.page.on("response", lambda response: self.handle_profile_reel_watcher_network(response, reels_data))
+        seen_count = 1
+
+        self.bio_data = dict()
+
+        for username in profiles:
+            print("watching profile reels for:", username)
+            
+            # keep track of seen to avoid suspension/ wasting time watch irrelevant stuff
+            relevant_user_reels_seen = 0
+            user_reels_seen = 0
+
+            try:
+                # go to the profile page
+                PROFILE_URL = f"https://www.instagram.com/{username}/reels"
+                await self.page.goto(PROFILE_URL)
+                await self.page.wait_for_timeout(3*1000) # wait 3 secs for page to load
+
+                # wait for the profile data to be saved
+                start_time = time.time()
+                while (not self.bio_data.get(username, False)) or (time.time()-start_time > 24) : # max wait for 24 secs (in case profile doesn't exist anymore / its private)
+                    await self.page.wait_for_timeout(1000) # wait 1 sec before rechecking
+                print("saved bio data")
+
+                # wait for reels_data to be loaded
+                while len(reels_data.keys()) == 0:
+                    await self.page.wait_for_timeout(1000) # wait 1 sec before rechecking
+
+                await self.page.wait_for_selector('a[href*="/reel/"]', timeout=30*1000)  # Wait for the reels to load
+                # get ready to start watching
+                a_tag : Locator = self.page.locator(f'a[href*="/reel/"]')  # Select the first matching <a> tag
+                a_tag = a_tag.first  # Get the first matching <a> tag
+                if await a_tag.is_visible():
+                    await a_tag.click() 
+                    print("clicked the first reel")
+            
+                start_time = time.time()
+                # watch till the given timer : 15 mins
+                while time.time() - start_time < 15*60:
+
+                    user_reels_seen += 1
+
+                    reel_code = self.page.url.split('/')[-1] if self.page.url.split('/')[-1] != "" else self.page.url.split('/')[-2]
+                    print(f"{seen_count}. code = {reel_code} |", end=" ")
+                    try:
+                        media_data: dict = reels_data[reel_code]
+
+                        # wait for caption to be there in the data
+                        if media_data.get("caption", False):
+                            caption: str = media_data["caption"]["text"]
+                        else:
+                            start_wait_for_caption = time.time()
+                            while not media_data.get("caption", False) and (time.time() - start_wait_for_caption < 20):
+                                await asyncio.sleep(1)
+                            caption:str = media_data.get("caption", dict()).get("text", "")
+
+                        self.reels_seen += 1
+                        reel_on_topic = False
+
+                        # check caption for freq incrementation
+                        if caption != "":
+                            for topic in self.topics_list:
+                                if topic.lower() in caption.lower():
+                                    # reel_on_topic = True
+                                    self.topic_to_freq[topic.lower()] += 1 # freq updates
+
+                        reel_on_topic = await relevancy_check(self.llm_model, caption, target_app_data.get("app_name", ""), target_app_data.get("keywords", []))
+
+                        if not reel_on_topic:
+                            print("skipping")
+                            await self.page.wait_for_timeout(5*1000) # some delay to not be too fast in skipping
+                            pass
+                        else:
+                            print("taken")
+                            relevant_user_reels_seen += 1
+                            self.relevant_reels_seen += 1
+                            await save_scraped_content(self.id, media_data) # save the scraped content to the database
+                            await self.page.wait_for_timeout(10*1000)   # Watch for 10 secs       
+                            # like reel
+                            await self.click_like_button(page_type="profile_reels")
+
+                            await self.page.wait_for_timeout(20*1000)  # Watch for 20 more secs
+
+                    except Exception as e:
+                        print(f"Error: {e}")
+                        print("reel not in data going to next")
+                        await self.page.wait_for_timeout(2*1000) # some delay to not be too fast
+
+                    seen_count+=1
+                    await update_freq_stats(self.id, self.topic_to_freq)
+
+                    # evaluate watching:
+                    #       consider we have seen minimum 12 reels and less than 2 reels were on topic. (2/12 = 0.166)
+                    if user_reels_seen >= 12 and (relevant_user_reels_seen/user_reels_seen < 0.166):
+                        raise Exception("Profile Not relevant to topic")
+                    
+                    await self.page.keyboard.press('ArrowRight')
+
+            except Exception as e:
+                print(f"\nError watching profile reels / user has no reels posted\n")
+                print(f"error: {e}")
+
+            finally:
+                # save
+                await self.update_scraper("profile_reels", data={
+                    "reels_seen": self.reels_seen,
+                    "relevant_reels_seen": self.relevant_reels_seen,
+                    # "state": "profile_bio"
+                })
+        
+
+# ----------- Feed ADS SCROLLER -----------
+
+    async def feed_ads_scroller(self, watch_time = 2*60*60):
+        print("----FEED ADS WATCHER----")
+        # posts_data = dict()
+        ads_data = dict()
+        self.page.on("response", lambda response: self.handle_feed_data(response, ads_data))
+        seen_count = 1
+
+        # scroll past stories
+        await self.slow_scroll( 125 )
+
+        wait = 6
+        while len(ads_data.keys()) == 0:
+            print(".", end="")
+            await self.page.wait_for_timeout(1000) # wait 1 sec before rechecking
+            wait = wait - 1
+            if wait <= 0:
+                await self.slow_scroll( 750 )
+        
+        start_time = time.time()
+        while time.time()-start_time < watch_time:
+            ads_links = ads_data.keys()
+            unseen_ads_links = [ l for l in ads_links if not ads_data[l].get("post_seen", False) ] # remove the usernames from the list
+
+            for l in unseen_ads_links:
+                try:
+                    print(f" {seen_count}. link = {l[:50]} |", end="\n")
+
+                    selector_link = l.split("&")[0]
+                    selector = f'a[href*="{selector_link}"]'
+                    element = await self.page.query_selector(selector)
+
+                    if element:
+                        # await self.page.evaluate('element => element.scrollIntoView()', element)
+                        await self.ensure_visible(element)
+                        # await element.scroll_into_view_if_needed()
+                        self.slow_scroll( -100 )
+                        await self.page.wait_for_timeout(2*1000) # wait 2 secs for page to load
+                        # await self.page.mouse.wheel(0, -100)
+
+                        # link = await element.get_attribute("href")
+                        # link_start = link.split("&amp;")[0]
+
+                        ad = ads_data[l]
+
+                        # for l in ads_data.keys():
+                        #     if link_start in l:
+                        #         ad = ads_data[l]
+
+                        if ad == None:
+                            print("ad not in data going to next")
+                            await self.page.wait_for_timeout(2*1000)
+                            continue
+                        
+                        relevant = await self.check_caption_relevancy(f'caption: {ad["caption"]["text"]} | link_text: {ad["link_text"]} ')
+                        if relevant: 
+                            # like it, save it
+                            script = '''
+                                (element)=>{
+                                    const func2 = (b)=>{
+                                        let a = b;
+                                        while(true){   
+                                            let res = a.querySelector(`svg[aria-label="Like"]`)
+                                            if (res === null){
+                                                a = a.parentElement
+                                            }
+                                            else{
+                                                const like_svg =  res;
+                                                let button = svg.closest(`div[role="button"]`);
+                                                button.click();
+
+                                                const save_svg = button.querySelector(`svg[aria-label="Save"]`);
+                                                if (save_svg !== null){
+                                                    button = save_svg.closest(`div[role="button"]`);
+                                                    button.click();
+                                                }
+
+                                                break;
+                                            }
+                                        }
+                                        return a;
+                                    }
+                                }
+                            ''' 
+                            await self.page.evaluate(script, element)
+                            await self.page.wait_for_timeout(15 * 1000)  # Wait for 15 secs
+                    else:
+                        await self.page.wait_for_timeout(2*1000) # some delay to not be too fast in skipping
+                    
+                    ads_data[l]["post_seen"] = True
+                    # scroll down
+                    print("scrolling down")
+                    await self.slow_scroll( 750 )
+                    await self.page.wait_for_timeout(7*1000) # some delay to not be too fast in skipping
+
+                except Exception as e:
+                    print(f"\nError watching profile reels / user has no reels posted\n")
+                    print(f"error: {e}")
+
+            print(f"scrolling down (ads seen = {len(ads_data.keys())})")
+            await self.slow_scroll( 500 )
+            # await self.page.mouse.wheel(0, 750)
+            await self.page.wait_for_timeout(4*1000) # some delay to not be too fast in skipping
+            # await asyncio.sleep(4)
+
+
+        
 # ------- network handlers ---------
 # network handlers
+    async def handle_feed_data(self, response, ads_data: dict):
+        url = response.url
+        target_url = "https://www.instagram.com/graphql/query"
+
+        if target_url in url:
+            try:
+                response_data = await response.json()
+
+                new_ads = []
+                #reels data
+                if response_data["data"].get("xdt_api__v1__feed__timeline__connection", False):
+                    # new_posts_data = {}
+                    for edge in response_data["data"]["xdt_api__v1__feed__timeline__connection"]["edges"]:
+                        # ADS
+                        if edge["node"].get("ad", False):
+                            ad = edge["node"]["ad"]
+                            ads_data[ ad["items"][0]["link"] ] = ad["items"][0]
+                            new_ads.append(ad["items"][0])
+                        # POSTS
+                        # else:
+                        #     media = edge["node"]["media"]
+                        #     posts_data[ media["code"] ] = media
+
+                    await insert_ads_data(self.id, new_ads)
+
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                print(f"Failed to process response from {url}: {str(e)}")
+
     async def handle_profile_reel_watcher_network(self, response, reels_data: dict):
         url = response.url
         target_url = "https://www.instagram.com/graphql/query"
@@ -540,6 +892,50 @@ class Instagram_Automator:
             except Exception as e:
                 print(f"Failed to process response from {url}: {str(e)}")
 
+    async def handle_search_network(self, response, posts_data: dict):
+        """Process network responses and store posts data"""
+        url = response.url
+        
+        target_url = "https://www.instagram.com/api/v1/fbsearch/web/top_serp/"
+
+        # Check if this is the URL we're interested in
+        if target_url in url:
+            try:
+                response_data = await response.json()
+                new_posts = {}
+
+                if response_data["media_grid"].get("sections", False):
+
+                    for section in response_data["media_grid"]["sections"]:
+                        for media_wrapper in section["layout_content"]["medias"]:
+                            
+                            media = media_wrapper["media"]
+                            
+                            media_data = dict({
+                                "code": media["code"],
+                                "caption": {
+                                    "text": media.get("caption", "").get("text", "")
+                                },
+                                "likes": media.get("likes_count", 0),
+                                "comments": media.get("comments_count", 0),
+                                "username": media.get("user", False).get("username", False),
+                                "taken_at": media["taken_at"],
+                            })
+                            # media_data["code"] = media["code"]
+                            # media_data["caption"]["text"] = media.get("caption", "").get("text", "")
+                            # media_data["likes"] = media.get("likes_count", 0)
+                            # media_data["comments"] = media.get("comments_count", 0)
+                            # media_data["username"] = media.get("user", False).get("username", False)
+                            # media_data["taken_at"] = media["taken_at"]
+                            # save the post data to the new_posts dict
+                            new_posts[media["code"]] = media_data
+
+                    posts_data.update(new_posts)
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                print(f"Failed to process response from {url}: {str(e)}")
+
 # utils to save and click stuff
     def add_username_to_potential_list(self, username):
         try:
@@ -598,6 +994,59 @@ class Instagram_Automator:
         
         self.start_time = time.time()
 
+    async def slow_scroll(self, target_px=750, step=15, delay=50):
+        """
+        Smoothly scroll the page to a target position
+        
+        Args:
+            page: Playwright page object
+            target_px: Target scroll position in pixels (default: 500)
+            step: Pixels to scroll per step (default: 20)
+            delay: Delay between scroll steps in mili seconds (default: 50)
+        """
+        current_pos = 0
+
+        if target_px < 0:
+            while current_pos > target_px:
+                current_pos -= step
+                await self.page.evaluate(f"window.scrollBy(0, {-1*step})")
+            await self.page.wait_for_timeout(delay)
+            return
+
+        while current_pos < target_px:
+            current_pos += step
+            await self.page.evaluate(f"window.scrollBy(0, {step})")
+            await self.page.wait_for_timeout(delay)
+
+    async def ensure_visible(self, element: ElementHandle) -> bool:
+            
+        # First try the native Playwright method
+        try:
+            await element.scroll_into_view_if_needed()
+        except:
+            pass
+            
+        # Then verify with JS and smooth scroll if needed
+        is_visible = await self.page.evaluate("""(element) => {
+            const rect = element.getBoundingClientRect();
+            return (
+                rect.top >= 0 &&
+                rect.left >= 0 &&
+                rect.bottom <= (window.innerHeight || document.documentElement.clientHeight) &&
+                rect.right <= (window.innerWidth || document.documentElement.clientWidth)
+            );
+        }""", element)
+        
+        if not is_visible:
+            await self.page.evaluate("""(element) => {
+                element.scrollIntoView({
+                    behavior: 'smooth',
+                    block: 'center'
+                });
+            }""", element)
+        
+        return True
+
 # main loop runner (switching between watching reels and extracting links)
     async def loop_runner(self):
         ''' run reel watcher and bio link extractor in a loop '''
@@ -608,6 +1057,12 @@ class Instagram_Automator:
 
             # Sign-IN
             await self.signIn()
+
+            if self.state == "feed_ads":
+                await self.feed_ads_scroller(watch_time=2*60*60)
+
+            if self.state == "target_app":
+                await self.scraper_target_app()
 
             # New   
             if self.state == "new": 
@@ -658,7 +1113,9 @@ class Instagram_Automator:
                 self.usernames.clear()
 
         except Exception as e:
-            print("error occurred from in insta automator")
+            import traceback
+            traceback.print_exc()
+            print("error occurred from insta automator")
         except KeyboardInterrupt:
             print("keyboard Interrupt")
         except asyncio.CancelledError:

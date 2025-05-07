@@ -2,7 +2,7 @@ import asyncio
 from playwright.async_api import async_playwright, Page, Locator
 from dotenv import load_dotenv
 from reels_scroller.Instargam_Automater import Instagram_Automator
-from database import get_scraper_data_by_id, set_scraper_activity, get_freq_stats, create_freq_stats, get_links_data, update_link_data, profiles_with_links, update_profile_data
+from database import get_scraper_data_by_id, set_scraper_activity, get_freq_stats, create_freq_stats, get_links_data, update_link_data, profiles_with_links, update_profile_data, get_links_to_check, get_all_non_filtered_ads, update_ad_data
 import os 
 from google import generativeai as genai
 from google.generativeai import GenerativeModel
@@ -58,25 +58,40 @@ async def main(scraper_id: str):
                 ]
             )
 
-            # # GO THROUGH WEBSITES
-            # page2 = await browser.new_page()
-
-            # # profiles_link_data = await profiles_with_links(scraper_id)
-            # links_data = await get_links_data(scraper_id)
-
             # genai.configure(api_key=llm_api_key)
             # llm_model = genai.GenerativeModel(model_name='gemini-2.0-flash')
             
+            #--------------------------------------------------------------
+            # # GO THROUGH PROFILES WEBSITES
+            # page2 = await browser.new_page()
+
+            # # profiles_link_data = await profiles_with_links(scraper_id)
+            # links_data = await get_links_to_check(scraper_id)
+            # # links_data = await get_links_data(scraper_id)
+
             # for link_data in links_data:
             #     resp = await check_if_suspicious_link(page2, link_data["link"], scraper_data, llm_model)
             #     update_data = dict({
             #         "suspicious": resp["is_relevant"],
-            #         "screenshot": resp["screenshot_base64"],
+            #         "screenshot": resp["screenshot_base64"]
             #     })
             #     print("link_data = ", link_data)
             #     await update_link_data(link_data["id"], update_data)
 
-            
+            # -------------------------------------------------------------
+            # # # GO THROUGH ADS WEBSITES
+            # page3 = await browser.new_page()
+            # ads = await get_all_non_filtered_ads(scraper_id)
+
+            # for ad in ads:
+            #     resp = await check_sus_filter_links(page3, ad["link"], scraper_data, llm_model)
+            #     await update_ad_data(ad["id"], {
+            #         "filtered_link": resp["filtered_link"],
+            #         "screenshot": resp["screenshot_base64"],
+            #         "suspicious": resp["is_relevant"]
+            #     })
+            #--------------------------------------------------------------
+
             # Instagram Automator
             page1 = await browser.new_page()
 
@@ -98,35 +113,57 @@ async def main(scraper_id: str):
         await set_scraper_activity(scraper_id, False)
         status = False
 
-async def check_if_suspicious_link(page: Page, link: str, scraper_data: dict, llm_model: GenerativeModel) -> dict:
+async def check_sus_filter_links(page: Page, link: str, scraper_data: dict, llm_model: GenerativeModel) -> dict:
     try:
         # Validate the link format
         if not link.startswith("http://") and not link.startswith("https://"):
             print(f"Invalid URL format: {link}")
-            return {"is_relevant": False, "screenshot_base64": None}
+            return {"is_relevant": False, "screenshot_base64": None, "filtered_link": False}
 
-        # Navigate to the link with a delay
-        await page.goto(link, timeout=30000)  # Increased timeout to handle slow-loading pages
-        await asyncio.sleep(3)  # Adding a delay to avoid going too fast
-        # content = await page.content()
+        # Navigate with a timeout but handle it explicitly
+        try:
+            await page.goto(link, wait_until="domcontentloaded", timeout=30000)
+        except TimeoutError:
+            print(f"Page load timed out for {link}, but continuing anyway")
+        
+        # Wait for the page to stabilize
+        await page.wait_for_timeout(5000)
+        
+        url = page.url
+        # Check if we have any content before proceeding
+        body_present = await page.locator("body").count() > 0
+        
+        if not body_present:
+            print(f"No body element found on {link}")
+            return {"is_relevant": False, "screenshot_base64": None}
 
         # Extract Content from the page for llm
         title = await page.title()
-        # Meta description
-        meta = await page.query_selector("meta[name='description']")
-        meta_description = await meta.get_attribute("content") if meta else ""
+        
+        # Safely get meta description
+        meta_description = ""
+        try:
+            meta = await page.query_selector("meta[name='description']")
+            if meta:
+                meta_description = await meta.get_attribute("content") or ""
+        except Exception:
+            pass
 
-        # meta_description = await page.locator("meta[name='description']").get_attribute("content")
-        # if not meta_description:
-        #     meta_description = ""
+        # Safely get headings
+        headings_text = ""
+        try:
+            headings = await page.locator("h1, h2, h3").all_inner_texts()
+            headings_text = " | ".join(headings)
+        except Exception:
+            pass
 
-        # Headings
-        headings = await page.locator("h1, h2, h3").all_inner_texts()
-        headings_text = " | ".join(headings)
-
-        # Body text preview
-        body_text = await page.locator("body").inner_text()
-        body_preview = body_text[:1500]  # Limit tokens
+        # Safely get body text preview
+        body_preview = ""
+        try:
+            body_text = await page.locator("body").inner_text()
+            body_preview = body_text[:1500]  # Limit tokens
+        except Exception:
+            pass
 
         content = f"""
                 Title: {title}
@@ -135,18 +172,91 @@ async def check_if_suspicious_link(page: Page, link: str, scraper_data: dict, ll
                 Body Preview: {body_preview}
                 """
 
+        # Take a screenshot and encode it in base64
+        screenshot_bytes = await page.screenshot(type="jpeg")
+        screenshot_base64 = base64.b64encode(screenshot_bytes).decode("utf-8")
+
         # Perform relevancy check using LLM
         response = await website_relevancy_check(llm_model, content, scraper_data["text"])
+
+        return {"is_relevant": response, "screenshot_base64": screenshot_base64, "filtered_link": url}
+
+        
+    except Exception as e:
+        print(f"Error checking link {link}: {str(e)}")
+        return {"is_relevant": False, "screenshot_base64": None, "filtered_link": url}
+
+async def check_if_suspicious_link(page: Page, link: str, scraper_data: dict, llm_model: GenerativeModel) -> dict:
+    try:
+        # Validate the link format
+        if not link.startswith("http://") and not link.startswith("https://"):
+            print(f"Invalid URL format: {link}")
+            return {"is_relevant": False, "screenshot_base64": None}
+
+        # Navigate with a timeout but handle it explicitly
+        try:
+            await page.goto(link, wait_until="domcontentloaded", timeout=30000)
+        except TimeoutError:
+            print(f"Page load timed out for {link}, but continuing anyway")
+            # Continue execution even after timeout
+            
+        # Wait for the page to stabilize
+        await page.wait_for_timeout(5000)
+        
+        # Check if we have any content before proceeding
+        body_present = await page.locator("body").count() > 0
+        
+        if not body_present:
+            print(f"No body element found on {link}")
+            return {"is_relevant": False, "screenshot_base64": None}
+
+        # Extract Content from the page for llm
+        title = await page.title()
+        
+        # Safely get meta description
+        meta_description = ""
+        try:
+            meta = await page.query_selector("meta[name='description']")
+            if meta:
+                meta_description = await meta.get_attribute("content") or ""
+        except Exception:
+            pass
+
+        # Safely get headings
+        headings_text = ""
+        try:
+            headings = await page.locator("h1, h2, h3").all_inner_texts()
+            headings_text = " | ".join(headings)
+        except Exception:
+            pass
+
+        # Safely get body text preview
+        body_preview = ""
+        try:
+            body_text = await page.locator("body").inner_text()
+            body_preview = body_text[:1500]  # Limit tokens
+        except Exception:
+            pass
+
+        content = f"""
+                Title: {title}
+                Meta Description: {meta_description}
+                Headings: {headings_text}
+                Body Preview: {body_preview}
+                """
 
         # Take a screenshot and encode it in base64
         screenshot_bytes = await page.screenshot(type="jpeg")
         screenshot_base64 = base64.b64encode(screenshot_bytes).decode("utf-8")
+
+        # Perform relevancy check using LLM
+        response = await website_relevancy_check(llm_model, content, scraper_data["text"])
 
         return {"is_relevant": response, "screenshot_base64": screenshot_base64}
 
     except Exception as e:
         print(f"Error checking link {link}: {str(e)}")
         return {"is_relevant": False, "screenshot_base64": None}
-
+    
 if __name__ == '__main__':
     asyncio.run(main())

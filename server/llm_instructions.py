@@ -12,6 +12,17 @@ async def relevancy_check(llm_model: GenerativeModel, video_caption: str, text_p
     Here Text prompt is the text by user on the topic he is looking for. 
     Keywords are the keywords relevant to the topic find through the processing.
     Caption is the caption of the video which is being checked for relevancy to the topic. 
+    The captions for videos can be tricky and may try to avoid the topic or be misleading.
+
+    example:
+    keywords: betting, fantasy sports, casino, poker, gambling
+    text prompt: Fantasy sports betting and gambling strategies, tips, and trends. How to place bets on fantasy leagues, popular fantasy sports platforms, fantasy football betting odds, player prop bets in fantasy sports, and legal aspects of gambling in fantasy sports. Recent developments in fantasy sports betting regulations and expert insights.
+    Captions examples for yes:
+    1. Play on India's Most Trusted Site
+    2. ✅ Play on FUN88 this IPL - Instant Deposits & Withdrawals, Safe & Secure Platform! 🥳
+    3. JOIN AND GET FREE !D NO DEPOS!T 
+    4. RP EXCH 🆔 in Just 2 Minutes. Msg Now. GET Your Online Satta !D.
+    5. 🎁 100% Bonus on 1st Deposit!🔄 Get 5% Refill Bonus – Every Time!🛡️ Safe & Secure
 
     Do not include any introductory text, explanations, markdown formatting, or any other text outside of the 1 word "yes" or "no". 
     JUST GIVE ME THE 1 WORD RESPONSE STRING WITH NO QUOTES OR ANYTHING.

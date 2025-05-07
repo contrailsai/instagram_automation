@@ -1,4 +1,5 @@
 /network
+/content
 /ig_auth.json
 info.txt
 request_urls.json
@@ -6,7 +7,7 @@ potential_profiles_list.txt
 profiles_links_n_text.json
 profiles_list.txt
 bio_links.txt
-
+profiles.txt
 .env
 poetry.lock
 __pycache__/

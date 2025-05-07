@@ -11,7 +11,7 @@ from multiprocessing import Process
 from google import generativeai as genai
 import base64
 from llm_instructions import title_keywords_hashtags_instruction
-from database import get_all_accounts, get_scraper_name, new_scraper, scraper_check_suspended, get_scraper_state, get_all_scrapers, get_all_scraper_ids, get_scraper_data_by_id, insert_account, get_unassigned_account, assign_scraper_to_account, get_reels_data, get_profiles_data, get_links_data, get_all_links_data, update_activity, get_link_data, get_profile_data, update_link_state
+from database import get_targeted_app, get_targeted_apps, insert_targeted_app, get_all_accounts, get_scraper_name, new_scraper, scraper_check_suspended, get_scraper_state, get_all_scrapers, get_all_scraper_ids, get_scraper_data_by_id, insert_account, get_unassigned_account, assign_scraper_to_account, get_reels_data, get_profiles_data, get_links_data, get_all_links_data, update_activity, get_link_data, get_profile_data, update_link_state, get_ads_data
 from fastapi.middleware.cors import CORSMiddleware
 import psutil 
 import tempfile
@@ -93,6 +93,54 @@ async def scraper_data(scraper_id: str):
         "scraper": scraper
     }
 
+# -------- INSERT TARGETED APPS -----------
+
+class insertapp(BaseModel):
+    scraper_id: str
+    app_name: str
+    keywords: list[str]
+
+
+@app.post("/insert-targeted-app")
+async def insert_targeted_app_data(doc : insertapp):
+    '''Insert a targeted app into the database'''
+    try:
+        await insert_targeted_app(doc)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to insert targeted app: {str(e)}")
+    
+    return {
+        "status": "success",
+        "message": "Targeted app inserted successfully"
+    }
+
+@app.get("/get-targeted-app/{app_id}")
+async def get_targeted_app_data(app_id: str):
+    '''get targeted app info'''
+    try:
+        doc = await get_targeted_app(app_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to insert targeted app: {str(e)}")
+    
+    return {
+        "status": "success",
+        "app": doc
+    }
+
+@app.get("/get-targeted-apps/{scraper_id}")
+async def get_targeted_apps_data(scraper_id: str):
+    '''get targeted app info'''
+    try:
+        doc = await get_targeted_apps(scraper_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to insert targeted app: {str(e)}")
+    
+    return {
+        "status": "success",
+        "app": doc
+    }
+
+
 @app.get("/reels_data/{scraper_id}")
 async def reels_scraper(scraper_id: str):
     '''Get a specific scraper from the database'''
@@ -119,6 +167,22 @@ async def profiles_scraper(scraper_id: str):
         "profiles": profiles
     }
 
+# --------------ADS----------------
+
+@app.get("/ads_data/{scraper_id}")
+async def ads_scraper(scraper_id: str):
+    '''Get a specific scraper from the database'''
+    try:
+        ads = await get_ads_data(scraper_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch scraper: {str(e)}")
+    
+    return {
+        "status": "success",
+        "ads": ads
+    }
+
+# -------------------------------
 @app.get("/links/{scraper_id}")
 async def links_scraper(scraper_id: str):
     '''Get a specific scraper from the database'''

@@ -266,7 +266,7 @@ async def get_all_accounts() -> list:
 
 # SCRAPED PROFILES DATABASE FUNCTIONS
 
-async def add_profile(scraper_id: str, username: str) -> dict:
+async def add_profile(scraper_id: str, username: str, targeted_app_id: str = "") -> dict:
     # select the correct collection
     collection = db["scrape_profiles"]
 
@@ -279,6 +279,9 @@ async def add_profile(scraper_id: str, username: str) -> dict:
     profile["saved_on"] = datetime.utcnow()
     profile["scraped"] = False
     profile["username"] = username
+
+    if targeted_app_id!= "":
+        profile["targeted_app_id"] = targeted_app_id
 
     result = await collection.insert_one(profile)
     return {"id": str(result.inserted_id)}
@@ -414,6 +417,9 @@ async def save_scraped_content(scraper_id: str, content: dict) -> dict:
     doc["scraper_id"] = scraper_id
     doc["saved_on"] = datetime.utcnow()
 
+    if content.get("target_app_id", False):
+        doc["target_app_id"] = content["target_app_id"]
+
     result = await collection.insert_one(doc)
     return {"id": str(result.inserted_id)}
 
@@ -497,6 +503,20 @@ async def get_link_data(link_id: str)-> dict:
 
     return result
 
+async def get_links_to_check(scraper_id: str) -> list:
+    # select the correct collection
+    collection = db["links"]
+    
+    documents = await collection.find({"scraper_id": scraper_id, "suspicious": ""}).to_list(length=None)
+    return [dict({
+        "id": str(doc["_id"]),
+        "link": doc["link"],
+        "profiles": doc["profiles"],
+        "suspicious": doc.get("suspicious", ""),
+        "state": doc.get("state", ""),
+        "manual_check_result": doc.get("manual_check_result", "")
+    }) for doc in documents]
+
 async def get_links_data(scraper_id: str) -> dict:
     # select the correct collection
     collection = db["links"]
@@ -506,9 +526,9 @@ async def get_links_data(scraper_id: str) -> dict:
     final_result = []
 
     for doc in documents:
-        doc["id"] = str(doc["_id"])
+        # doc["id"] = str(doc["_id"])
         doc["_id"] = str(doc["_id"])
-        doc.pop("screenshot", None)
+        # doc.pop("screenshot", None) # no need to screenshots here
         final_result.append(doc)
     return final_result
 
@@ -573,3 +593,159 @@ async def update_link_data(link_id: str, data: dict):
         }
     )
     return True
+
+async def get_all_sus_links():
+    collection = db["links"]
+    
+    documents = await collection.find({}, {"_id": 0, "link": 1}).to_list(length=None)
+    return [doc["link"] for doc in documents]
+
+# ADS
+# {
+#     scraper_id,
+#     link,
+#     code,
+#     like_count,
+#     comment_count,
+#     profile,
+#     caption,
+#     link_text,
+# }
+
+async def insert_ads_data(scraper_id: str, data) -> dict:
+    # select the correct collection
+    collection = db["ads"]
+    
+    for ad in data:
+
+        ad_data = dict({
+            "scraper_id": scraper_id,
+            "link": ad["link"],
+            "code": ad["code"],
+            "like_count": ad["like_count"],
+            "comment_count": ad["comment_count"],
+            "profile": ad["user"]["username"],
+            "caption": ad["caption"],
+            "link_text": ad["link_text"]
+        })
+
+        result = await collection.insert_one(ad_data)
+    return True
+
+async def update_ad_data(ad_id: str, data: dict) -> dict:
+    # select the correct collection
+    collection = db["ads"]
+
+    try:
+        ad_object_id = ObjectId(ad_id)
+    except: # invalid id format
+        return None
+
+    result = await collection.update_one(
+        {"_id": ad_object_id},
+        {
+            "$set": data
+        }
+    )
+    return True
+
+async def get_ads_data(scraper_id: str) -> dict:
+    # select the correct collection
+    collection = db["ads"]
+    
+    documents = await collection.find({"scraper_id": scraper_id}).to_list(length=None)
+    return [dict({
+        "id": str(doc["_id"]),
+        "link": doc["link"],
+        "code": doc["code"],
+        "like_count": doc["like_count"],
+        "comment_count": doc["comment_count"],
+        "profile": doc["profile"],
+        "caption": doc["caption"],
+        "link_text": doc["link_text"],
+        "screenshot": doc["screenshot"],
+        "filtered_link": doc["filtered_link"]
+    }) for doc in documents]
+
+async def get_all_non_filtered_ads(scraper_id: str) -> dict:
+    # select the correct collection
+    collection = db["ads"]
+    
+    documents = await collection.find({"scraper_id": scraper_id, "filtered_link": {"$exists": False} }).to_list(length=None)
+    return [dict({
+        "id": str(doc["_id"]),
+        "link": doc["link"],
+        "code": doc["code"],
+        "like_count": doc["like_count"],
+        "comment_count": doc["comment_count"],
+        "profile": doc["profile"],
+        "caption": doc["caption"],
+        "link_text": doc["link_text"]
+    }) for doc in documents]
+
+async def get_all_sus_ads_links():
+    collection = db["ads"]
+    documents = await collection.find({}, {"_id": 0, "filtered_link": 1}).to_list(length=None)
+    return [doc["filtered_link"] for doc in documents if "filtered_link" in doc]
+
+
+
+# TARGATED APPS
+
+# {
+#     "scraper_id": "",
+#     "Keyword": ["govindia"],
+#     "link_contains_words": ["govindia365"],
+#     "app_name": "govindia365",
+# }
+
+async def get_targeted_apps(scraper_id: str) -> dict:
+    # select the correct collection
+    collection = db["targeted_apps"]
+    result = await collection.find({"scraper_id": scraper_id}, {"_id": 0}).to_list(length=None)
+    return result
+
+async def get_targeted_app(app_id: str) -> dict:
+    # select the correct collection
+    collection = db["targeted_apps"]
+
+    try:
+        app_object_id = ObjectId(app_id)
+    except: # invalid id format
+        return None
+    result = await collection.find_one({"_id": app_object_id}, {"_id": 0})
+
+    return result
+
+async def update_targeted_app(target_app_id: str, data: dict) -> dict:
+    # select the correct collection
+    collection = db["targeted_apps"]
+
+    try:
+        scraper_object_id = ObjectId(target_app_id)
+    except: # invalid id format
+        return None
+
+    result = await collection.update_one(
+        {"scraper_id": scraper_object_id},
+        {
+            "$set": data
+        },
+        upsert=True
+    )
+    return True
+
+async def insert_targeted_app( data ) -> dict:
+    # select the correct collection
+    collection = db["targeted_apps"]
+    data = dict(data)
+
+    doc = await collection.insert_one(data)
+    return True
+
+async def get_targeted_app_profiles(app_id: str) -> list:
+    # select the correct collection
+    collection = db["scrape_profiles"]
+    profiles = await collection.find({"targeted_app_id": app_id}, {"_id": 0}).to_list(length=None)
+
+    return profiles
